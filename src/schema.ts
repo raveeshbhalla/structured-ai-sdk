@@ -103,7 +103,7 @@ export const PROMPT_CONFIG_SCHEMA = {
     templateString: {
       type: "string",
       description:
-        "Text with {{variable}} placeholders. Plain identifiers only, with optional whitespace; escape literal mustache openers as \\{{.",
+        "Text with {{variable}} placeholders. Plain identifiers only, with optional whitespace; backslashes before mustache openers use escape parity.",
     },
     simpleMessage: {
       oneOf: [

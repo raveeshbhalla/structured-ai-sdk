@@ -6,12 +6,12 @@ export function extractVariables(template: string): string[] {
   const names: string[] = [];
 
   for (let index = 0; index < template.length; index += 1) {
-    if (template.startsWith("\\{{", index)) {
-      index += 2;
+    if (!template.startsWith("{{", index)) {
       continue;
     }
 
-    if (!template.startsWith("{{", index)) {
+    if (countBackslashesBefore(template, index) % 2 === 1) {
+      index += 1;
       continue;
     }
 
@@ -51,14 +51,20 @@ export function renderTemplate(
 
   let rendered = "";
   for (let index = 0; index < template.length; index += 1) {
-    if (template.startsWith("\\{{", index)) {
-      rendered += "{{";
-      index += 2;
+    if (!template.startsWith("{{", index)) {
+      rendered += template[index];
       continue;
     }
 
-    if (!template.startsWith("{{", index)) {
-      rendered += template[index];
+    const backslashes = countBackslashesBefore(template, index);
+    if (backslashes > 0) {
+      rendered =
+        rendered.slice(0, -backslashes) + "\\".repeat(Math.floor(backslashes / 2));
+    }
+
+    if (backslashes % 2 === 1) {
+      rendered += "{{";
+      index += 1;
       continue;
     }
 
@@ -81,4 +87,12 @@ export function renderTemplate(
   }
 
   return rendered;
+}
+
+function countBackslashesBefore(value: string, index: number): number {
+  let count = 0;
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) {
+    count += 1;
+  }
+  return count;
 }

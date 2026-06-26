@@ -77,7 +77,7 @@
   "definitions": {
     "templateString": {
       "type": "string",
-      "description": "Text with {{variable}} placeholders. Plain identifiers only, with optional whitespace; escape literal mustache openers as \\{{."
+      "description": "Text with {{variable}} placeholders. Plain identifiers only, with optional whitespace; backslashes before mustache openers use escape parity."
     },
     "simpleMessage": {
       "oneOf": [

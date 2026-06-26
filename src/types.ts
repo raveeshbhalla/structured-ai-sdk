@@ -123,15 +123,26 @@ type IsIdentifier<S extends string> = S extends `${infer First}${infer Rest}`
   : false;
 type TemplateVariableName<S extends string> =
   IsIdentifier<Trim<S>> extends true ? Trim<S> : never;
+type Toggle<T extends boolean> = T extends true ? false : true;
+type ExtractTemplateVariablesFrom<
+  S extends string,
+  Escaped extends boolean = false,
+> = S extends `${infer First}${infer Rest}`
+  ? First extends "\\"
+    ? ExtractTemplateVariablesFrom<Rest, Toggle<Escaped>>
+    : First extends "{"
+      ? Rest extends `{${infer AfterOpen}`
+        ? Escaped extends true
+          ? ExtractTemplateVariablesFrom<AfterOpen, false>
+          : AfterOpen extends `${infer Name}}}${infer Tail}`
+            ? TemplateVariableName<Name> | ExtractTemplateVariablesFrom<Tail, false>
+            : never
+        : ExtractTemplateVariablesFrom<Rest, false>
+      : ExtractTemplateVariablesFrom<Rest, false>
+  : never;
 
 export type ExtractTemplateVariables<S extends string> =
-  string extends S
-    ? string
-    : S extends `${infer Before}\\{{${infer After}`
-      ? ExtractTemplateVariables<`${Before}${After}`>
-      : S extends `${string}{{${infer Name}}}${infer Rest}`
-        ? TemplateVariableName<Name> | ExtractTemplateVariables<Rest>
-      : never;
+  string extends S ? string : ExtractTemplateVariablesFrom<S>;
 
 type TemplateFromSimple<T> = T extends string
   ? T

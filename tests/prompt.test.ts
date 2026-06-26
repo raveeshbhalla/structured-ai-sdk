@@ -98,6 +98,7 @@ describe("template engine", () => {
     expect(extractVariables("escaped \\{{not_a_var}} but {{real}}")).toEqual([
       "real",
     ]);
+    expect(extractVariables("Path C:\\\\{{folder}}")).toEqual(["folder"]);
     expect(extractVariables("no vars")).toEqual([]);
     expect(extractVariables("old single braces stay literal: {ticket}")).toEqual([]);
   });
@@ -127,6 +128,10 @@ describe("template engine", () => {
     expect(renderTemplate("\\{{literal}} {{ x }}", { x: 1 })).toBe(
       "{{literal}} 1",
     );
+    expect(renderTemplate("Path C:\\\\{{folder}}", { folder: "logs" })).toBe(
+      "Path C:\\logs",
+    );
+    expect(renderTemplate("\\\\\\{{literal}}", {})).toBe("\\{{literal}}");
     expect(renderTemplate('Use JSON: {"ticket": "{ticket}"} for {{name}}', {
       name: "Ada",
     })).toBe('Use JSON: {"ticket": "{ticket}"} for Ada');

@@ -489,6 +489,7 @@ Hello {{name}}
 Hello {{ name }}
 JSON is literal: {"field": "{value}"}
 Literal mustache tag: \{{name}}
+Backslash plus placeholder: \\{{folder}}
 ```
 
 Rejected:
@@ -504,7 +505,9 @@ Rejected:
 {{{raw}}}
 ```
 
-Plain `{name}` is not a placeholder; it renders as literal text. This
+Plain `{name}` is not a placeholder; it renders as literal text. Backslashes
+before `{{` use escape parity: `\{{name}}` renders the literal tag, while
+`\\{{folder}}` renders a literal backslash followed by the `folder` value. This
 intentionally small syntax keeps templates portable across Python and
 TypeScript without pulling in full Mustache semantics.
 

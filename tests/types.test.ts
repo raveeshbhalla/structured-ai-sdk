@@ -2,6 +2,7 @@ import { describe, expectTypeOf, it } from "vitest";
 
 import { definePrompt } from "../src";
 import type {
+  ExtractTemplateVariables,
   PromptHandlers,
   PromptOutput,
   PromptToolInputs,
@@ -32,6 +33,12 @@ describe("type helpers", () => {
       company: unknown;
       ticket: unknown;
     }>();
+    expectTypeOf<ExtractTemplateVariables<"Path C:\\\\{{ folder }}">>().toEqualTypeOf<
+      "folder"
+    >();
+    expectTypeOf<ExtractTemplateVariables<"Literal \\{{ folder }}">>().toEqualTypeOf<
+      never
+    >();
 
     const prompt = definePrompt(config);
     prompt.render({ company: "Acme", ticket: "It broke" });

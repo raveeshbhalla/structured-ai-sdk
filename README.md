@@ -123,10 +123,12 @@ Ticket: {{ ticket }}
 Plain `{ticket}` is literal text. That keeps JSON examples and prose with
 single braces safe. This is not full Mustache: sections, dotted paths, indexes,
 triple braces, and format specifiers are rejected. To render a literal
-mustache tag, escape the opener:
+mustache tag, escape the opener. To render a literal backslash immediately
+before a real placeholder, escape the backslash too:
 
 ```txt
 \{{ticket}} renders as {{ticket}}
+\\{{folder}} renders as \logs when folder = logs
 ```
 
 ## Model Strings vs Provider Objects
