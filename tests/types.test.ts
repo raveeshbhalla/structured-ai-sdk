@@ -27,6 +27,11 @@ const config = {
   },
 } as const;
 
+type LongChunk =
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+type LongPrompt =
+  `${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk} {{ value }}`;
+
 describe("type helpers", () => {
   it("infers variables from literal prompt configs", () => {
     expectTypeOf<PromptVariables<typeof config>>().toMatchTypeOf<{
@@ -39,6 +44,7 @@ describe("type helpers", () => {
     expectTypeOf<ExtractTemplateVariables<"Literal \\{{ folder }}">>().toEqualTypeOf<
       never
     >();
+    expectTypeOf<ExtractTemplateVariables<LongPrompt>>().toEqualTypeOf<"value">();
 
     const prompt = definePrompt(config);
     prompt.render({ company: "Acme", ticket: "It broke" });

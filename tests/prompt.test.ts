@@ -157,6 +157,26 @@ describe("typed messages and traces", () => {
     expect(dumped[0]?.variables).toEqual({ topic: "taxes" });
     expect(loadMessages(dumped)[0]?.content).toBe("You help with taxes.");
   });
+
+  it("preserves literal content with backslashes before mustache tags", () => {
+    const prompt = loadPrompt({
+      name: "literal-content",
+      model: "mock-model",
+      messages: [
+        {
+          id: "literal",
+          role: "system",
+          content: "Keep \\{{ticket}} and C:\\\\{{folder}}",
+        },
+      ],
+    });
+
+    const [message] = prompt.render();
+    expect(message?.content).toBe("Keep \\{{ticket}} and C:\\\\{{folder}}");
+    expect(message?.variables).toEqual({});
+    expect(extractVariables(message?.template ?? "")).toEqual([]);
+    expect(renderTemplate(message?.template ?? "", {})).toBe(message?.content);
+  });
 });
 
 describe("prompt configs", () => {

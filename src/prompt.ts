@@ -476,7 +476,29 @@ function typedFactory(role: PromptRole) {
 }
 
 function escapeLiteralTemplate(content: string): string {
-  return content.replaceAll("{{", "\\{{");
+  let escaped = "";
+  for (let index = 0; index < content.length; index += 1) {
+    if (!content.startsWith("{{", index)) {
+      escaped += content[index];
+      continue;
+    }
+
+    const backslashes = countBackslashesBefore(content, index);
+    escaped =
+      escaped.slice(0, -backslashes) +
+      "\\".repeat(backslashes * 2 + 1) +
+      "{{";
+    index += 1;
+  }
+  return escaped;
+}
+
+function countBackslashesBefore(value: string, index: number): number {
+  let count = 0;
+  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) {
+    count += 1;
+  }
+  return count;
 }
 
 function normalizeParams(params: Record<string, unknown>): Record<string, unknown> {
