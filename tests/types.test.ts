@@ -16,8 +16,8 @@ const config = {
     tags: "string[]",
     user: { id: "integer", active: "boolean" },
   },
-  system: "You triage tickets for {company}.",
-  user: "Ticket: {ticket}",
+  system: "You triage tickets for {{company}}.",
+  user: "Ticket: {{ticket}}",
   tools: {
     get_weather: {
       description: "Get current weather.",

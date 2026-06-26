@@ -193,7 +193,7 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
 
       const content = message.content ?? "";
       return factory({
-        template: escapeLiteralTemplate(content),
+        template: content,
         variables: {},
         optimize: message.optimize ?? false,
         ...(message.id !== undefined ? { id: message.id } : {}),
@@ -473,10 +473,6 @@ function typedFactory(role: PromptRole) {
     return TypedAssistantMessage;
   }
   return TypedUserMessage;
-}
-
-function escapeLiteralTemplate(content: string): string {
-  return content.replaceAll("{", "{{").replaceAll("}", "}}");
 }
 
 function normalizeParams(params: Record<string, unknown>): Record<string, unknown> {

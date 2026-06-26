@@ -40,8 +40,8 @@ const triagePrompt = definePrompt({
     urgency: ["low", "medium", "high"],
     summary: "string",
   },
-  system: "You triage support tickets for {company}. Be decisive.",
-  user: "Ticket: {ticket}",
+  system: "You triage support tickets for {{company}}. Be decisive.",
+  user: "Ticket: {{ticket}}",
 } as const);
 
 const result = await triagePrompt.generate({
@@ -61,7 +61,7 @@ types from the prompt config. JSON/YAML prompt files use the same schema as
 
 - `definePrompt`, `loadPrompt`, and `loadPromptUrl` for code, file, and hosted
   prompt configs.
-- Portable `{variable}` templates for system, user, and assistant messages.
+- Portable Mustache-style `{{variable}}` templates for system, user, and assistant messages. Single braces are literal text, so JSON examples can appear naturally in templates.
 - Structured output shorthand that compiles to JSON Schema.
 - Tool interface configs that bind to executable handlers at call time.
 - Immutable prompt mutations for optimizers: `withTemplate` and
@@ -90,10 +90,11 @@ Start there for:
 
 ## Local Sample
 
-OpenAI structured-output smoke test:
+Samples:
 
 ```bash
 direnv allow
+direnv exec . npm run sample:template
 direnv exec . npm run sample:openai
 ```
 

@@ -69,13 +69,29 @@ export type PromptConfig = {
   max_steps?: number;
 };
 
+type TrimLeft<S extends string> = S extends ` ${infer Rest}`
+  ? TrimLeft<Rest>
+  : S extends `\n${infer Rest}`
+    ? TrimLeft<Rest>
+    : S extends `\t${infer Rest}`
+      ? TrimLeft<Rest>
+      : S;
+
+type TrimRight<S extends string> = S extends `${infer Rest} `
+  ? TrimRight<Rest>
+  : S extends `${infer Rest}\n`
+    ? TrimRight<Rest>
+    : S extends `${infer Rest}\t`
+      ? TrimRight<Rest>
+      : S;
+
+type Trim<S extends string> = TrimLeft<TrimRight<S>>;
+
 export type ExtractTemplateVariables<S extends string> =
   string extends S
     ? string
-    : S extends `${infer Before}{{${infer After}`
-    ? ExtractTemplateVariables<`${Before}${After}`>
-    : S extends `${string}{${infer Name}}${infer Rest}`
-      ? Name | ExtractTemplateVariables<Rest>
+    : S extends `${string}{{${infer Name}}}${infer Rest}`
+      ? Trim<Name> | ExtractTemplateVariables<Rest>
       : never;
 
 type TemplateFromSimple<T> = T extends string
