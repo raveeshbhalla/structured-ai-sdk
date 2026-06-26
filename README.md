@@ -2,9 +2,9 @@
 
 Structured prompt configs and typed templates for the Vercel AI SDK.
 
-This package is a minimal wrapper around `ai`: it loads `pai-sdk`-compatible
-JSON/YAML prompt definitions, renders typed trace messages, enforces
-optimizer-safe mutations, and delegates generation to AI SDK core.
+This package is a minimal wrapper around `ai`: it loads shared prompt-config
+JSON/YAML definitions, renders typed trace messages, enforces optimizer-safe
+mutations, and delegates generation to AI SDK core.
 
 It is for teams that want DSPy-style prompt signatures and optimizer-friendly
 prompt configs while still using the TypeScript AI SDK for actual model calls.
@@ -40,8 +40,8 @@ const triagePrompt = definePrompt({
     urgency: ["low", "medium", "high"],
     summary: "string",
   },
-  system: "You triage support tickets for {company}. Be decisive.",
-  user: "Ticket: {ticket}",
+  system: "You triage support tickets for {{company}}. Be decisive.",
+  user: "Ticket: {{ticket}}",
 } as const);
 
 const result = await triagePrompt.generate({
@@ -54,14 +54,14 @@ console.log(triagePrompt.contentHash());
 ```
 
 `definePrompt({...} as const)` infers required variables and structured output
-types from the prompt config. JSON/YAML prompt files use the same schema as
-`pai-sdk` prompt configs.
+types from strict mustache-style `{{variable}}` placeholders and the prompt
+config output schema.
 
 ## What You Get
 
 - `definePrompt`, `loadPrompt`, and `loadPromptUrl` for code, file, and hosted
   prompt configs.
-- Portable `{variable}` templates for system, user, and assistant messages.
+- Portable `{{variable}}` templates for system, user, and assistant messages.
 - Structured output shorthand that compiles to JSON Schema.
 - Tool interface configs that bind to executable handlers at call time.
 - Immutable prompt mutations for optimizers: `withTemplate` and
@@ -79,7 +79,7 @@ Read the full scenario guide:
 Start there for:
 
 - code-authored prompts with strong TypeScript inference
-- loading the exact same JSON/YAML prompt config used by `pai-sdk`
+- loading shared JSON/YAML prompt configs
 - structured output
 - tools and handlers
 - streaming
@@ -110,6 +110,26 @@ import schema from "structured-ai-sdk/prompt-config.schema.json";
 ```
 
 Use it for editor validation, CI checks, or hosted prompt-service validation.
+
+## Template Syntax
+
+Templates use one strict mustache-style placeholder form:
+
+```txt
+Ticket: {{ticket}}
+Ticket: {{ ticket }}
+```
+
+Plain `{ticket}` is literal text. That keeps JSON examples and prose with
+single braces safe. This is not full Mustache: sections, dotted paths, indexes,
+triple braces, and format specifiers are rejected. To render a literal
+mustache tag, escape the opener. To render a literal backslash immediately
+before a real placeholder, escape the backslash too:
+
+```txt
+\{{ticket}} renders as {{ticket}}
+\\{{folder}} renders as \logs when folder = logs
+```
 
 ## Model Strings vs Provider Objects
 

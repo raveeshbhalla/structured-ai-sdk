@@ -17,8 +17,8 @@ const prompt = definePrompt({
     next_action: "string",
   },
   system:
-    "You triage support tickets for {company}. Be concise and choose the smallest useful next action.",
-  user: "Ticket: {ticket}",
+    "You triage support tickets for {{company}}. Be concise and choose the smallest useful next action.",
+  user: "Ticket: {{ticket}}",
 } as const);
 
 const variables = {

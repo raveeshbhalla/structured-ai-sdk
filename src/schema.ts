@@ -4,7 +4,7 @@ export const PROMPT_CONFIG_SCHEMA = {
   $schema: "http://json-schema.org/draft-07/schema#",
   title: "pai-sdk prompt config",
   description:
-    "A prompt definition: model + params + output schema + message templates with {variable} slots. Simple form: top-level system/user. General form: a messages list.",
+    "A prompt definition: model + params + output schema + message templates with strict {{variable}} slots. Simple form: top-level system/user. General form: a messages list.",
   type: "object",
   required: ["name"],
   additionalProperties: false,
@@ -103,7 +103,7 @@ export const PROMPT_CONFIG_SCHEMA = {
     templateString: {
       type: "string",
       description:
-        "Text with {variable} placeholders. Plain {name} only; escape literal braces as {{ and }}.",
+        "Text with {{variable}} placeholders. Plain identifiers only, with optional whitespace; backslashes before mustache openers use escape parity.",
     },
     simpleMessage: {
       oneOf: [

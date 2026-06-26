@@ -69,14 +69,76 @@ export type PromptConfig = {
   max_steps?: number;
 };
 
+type TemplateWhitespace = " " | "\n" | "\r" | "\t";
+type TrimLeft<S extends string> = S extends `${TemplateWhitespace}${infer Rest}`
+  ? TrimLeft<Rest>
+  : S;
+type TrimRight<S extends string> = S extends `${infer Rest}${TemplateWhitespace}`
+  ? TrimRight<Rest>
+  : S;
+type Trim<S extends string> = TrimLeft<TrimRight<S>>;
+
+type LowerAlpha =
+  | "a"
+  | "b"
+  | "c"
+  | "d"
+  | "e"
+  | "f"
+  | "g"
+  | "h"
+  | "i"
+  | "j"
+  | "k"
+  | "l"
+  | "m"
+  | "n"
+  | "o"
+  | "p"
+  | "q"
+  | "r"
+  | "s"
+  | "t"
+  | "u"
+  | "v"
+  | "w"
+  | "x"
+  | "y"
+  | "z";
+type UpperAlpha = Uppercase<LowerAlpha>;
+type Digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
+type IdentifierStart = LowerAlpha | UpperAlpha | "_";
+type IdentifierPart = IdentifierStart | Digit;
+type IsIdentifierTail<S extends string> = S extends ""
+  ? true
+  : S extends `${infer First}${infer Rest}`
+    ? First extends IdentifierPart
+      ? IsIdentifierTail<Rest>
+      : false
+    : false;
+type IsIdentifier<S extends string> = S extends `${infer First}${infer Rest}`
+  ? First extends IdentifierStart
+    ? IsIdentifierTail<Rest>
+    : false
+  : false;
+type TemplateVariableName<S extends string> =
+  IsIdentifier<Trim<S>> extends true ? Trim<S> : never;
+type Toggle<T extends boolean> = T extends true ? false : true;
+type HasOddTrailingBackslashes<
+  S extends string,
+  Odd extends boolean = false,
+> = S extends `${infer Prefix}\\`
+  ? HasOddTrailingBackslashes<Prefix, Toggle<Odd>>
+  : Odd;
+type ExtractTemplateVariablesFrom<S extends string> =
+  S extends `${infer Before}{{${infer Name}}}${infer Rest}`
+    ? HasOddTrailingBackslashes<Before> extends true
+      ? ExtractTemplateVariablesFrom<Rest>
+      : TemplateVariableName<Name> | ExtractTemplateVariablesFrom<Rest>
+    : never;
+
 export type ExtractTemplateVariables<S extends string> =
-  string extends S
-    ? string
-    : S extends `${infer Before}{{${infer After}`
-    ? ExtractTemplateVariables<`${Before}${After}`>
-    : S extends `${string}{${infer Name}}${infer Rest}`
-      ? Name | ExtractTemplateVariables<Rest>
-      : never;
+  string extends S ? string : ExtractTemplateVariablesFrom<S>;
 
 type TemplateFromSimple<T> = T extends string
   ? T
