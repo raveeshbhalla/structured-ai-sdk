@@ -6,43 +6,34 @@ export function extractVariables(template: string): string[] {
   const names: string[] = [];
 
   for (let index = 0; index < template.length; index += 1) {
-    const char = template[index];
-    const next = template[index + 1];
-
-    if (char === "{" && next === "{") {
-      index += 1;
+    if (template.startsWith("\\{{", index)) {
+      index += 2;
       continue;
     }
 
-    if (char === "}" && next === "}") {
-      index += 1;
+    if (!template.startsWith("{{", index)) {
       continue;
     }
 
-    if (char === "}") {
-      throw new TemplateError("Invalid template: single '}' encountered.");
-    }
-
-    if (char !== "{") {
-      continue;
-    }
-
-    const end = template.indexOf("}", index + 1);
+    const end = template.indexOf("}}", index + 2);
     if (end === -1) {
-      throw new TemplateError("Invalid template: expected '}' before end of string.");
+      throw new TemplateError(
+        "Invalid template: expected '}}' before end of string.",
+      );
     }
 
-    const name = template.slice(index + 1, end);
+    const rawName = template.slice(index + 2, end);
+    const name = rawName.trim();
     if (!IDENTIFIER.test(name)) {
       throw new TemplateError(
-        `Only plain {name} placeholders are supported; got '{${name}}'.`,
+        `Only plain {{name}} placeholders are supported; got '{{${rawName}}}'.`,
       );
     }
 
     if (!names.includes(name)) {
       names.push(name);
     }
-    index = end;
+    index = end + 1;
   }
 
   return names;
@@ -60,34 +51,33 @@ export function renderTemplate(
 
   let rendered = "";
   for (let index = 0; index < template.length; index += 1) {
-    const char = template[index];
-    const next = template[index + 1];
-
-    if (char === "{" && next === "{") {
-      rendered += "{";
-      index += 1;
+    if (template.startsWith("\\{{", index)) {
+      rendered += "{{";
+      index += 2;
       continue;
     }
 
-    if (char === "}" && next === "}") {
-      rendered += "}";
-      index += 1;
+    if (!template.startsWith("{{", index)) {
+      rendered += template[index];
       continue;
     }
 
-    if (char === "{") {
-      const end = template.indexOf("}", index + 1);
-      const name = template.slice(index + 1, end);
-      rendered += String(variables[name]);
-      index = end;
-      continue;
+    const end = template.indexOf("}}", index + 2);
+    if (end === -1) {
+      throw new TemplateError(
+        "Invalid template: expected '}}' before end of string.",
+      );
     }
 
-    if (char === "}") {
-      throw new TemplateError("Invalid template: single '}' encountered.");
+    const rawName = template.slice(index + 2, end);
+    const name = rawName.trim();
+    if (!IDENTIFIER.test(name)) {
+      throw new TemplateError(
+        `Only plain {{name}} placeholders are supported; got '{{${rawName}}}'.`,
+      );
     }
-
-    rendered += char;
+    rendered += String(variables[name]);
+    index = end + 1;
   }
 
   return rendered;

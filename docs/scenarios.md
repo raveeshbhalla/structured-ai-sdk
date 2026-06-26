@@ -52,8 +52,8 @@ const prompt = definePrompt({
     summary: "string",
     tags: "string[]",
   },
-  system: "You triage tickets for {company}.",
-  user: "Ticket: {ticket}",
+  system: "You triage tickets for {{company}}.",
+  user: "Ticket: {{ticket}}",
 } as const);
 
 const result = await prompt.generate({
@@ -68,10 +68,11 @@ result.output.tags; // string[]
 Why `as const` matters: TypeScript can only infer literal template variables
 and enum values when the config is preserved as a literal type.
 
-## Scenario 2: Load The Same YAML/JSON Config Used By `pai-sdk`
+## Scenario 2: Load A Shared YAML/JSON Prompt Config
 
 Use this when prompts live in a repo, database, or prompt service and need to
-run in both Python `pai-sdk` and TypeScript.
+run in both Python `pai-sdk` and TypeScript using the shared prompt-config
+shape and strict `{{variable}}` placeholders.
 
 ```yaml
 # prompts/support-triage.yaml
@@ -84,8 +85,8 @@ output:
   urgency: [low, medium, high]
   summary: string
 system: |
-  You triage support tickets for {company}. Be decisive.
-user: "Ticket: {ticket}"
+  You triage support tickets for {{company}}. Be decisive.
+user: "Ticket: {{ticket}}"
 ```
 
 ```ts
@@ -149,8 +150,8 @@ const prompt = definePrompt({
       employee_count: "integer",
     },
   },
-  system: "Score sales leads for {company}.",
-  user: "{lead}",
+  system: "Score sales leads for {{company}}.",
+  user: "{{lead}}",
 } as const);
 ```
 
@@ -182,7 +183,7 @@ const prompt = definePrompt({
     description: "Extract exactly one ISO date.",
   },
   system: "Extract dates.",
-  user: "{text}",
+  user: "{{text}}",
 } as const);
 ```
 
@@ -198,7 +199,7 @@ const weatherPrompt = definePrompt({
   name: "weather-helper",
   model,
   system: "Use tools when needed.",
-  user: "Question: {question}",
+  user: "Question: {{question}}",
   tools: {
     get_weather: {
       description: "Get current weather. Call for weather questions.",
@@ -273,19 +274,19 @@ const prompt = definePrompt({
       id: "instructions",
       role: "system",
       optimize: true,
-      template: "You triage tickets for {company}. Be decisive.",
+      template: "You triage tickets for {{company}}. Be decisive.",
     },
     {
       id: "ticket",
       role: "user",
-      template: "Ticket: {ticket}",
+      template: "Ticket: {{ticket}}",
     },
   ],
 } as const);
 
 const evolved = prompt.withTemplate(
   "instructions",
-  "You are {company}'s senior incident triage assistant. Be precise.",
+  "You are {{company}}'s senior incident triage assistant. Be precise.",
 );
 
 console.log(prompt.contentHash());
@@ -362,7 +363,7 @@ const prompt = definePrompt({
       id: "instructions",
       role: "system",
       optimize: true,
-      template: "Answer for {audience}.",
+      template: "Answer for {{audience}}.",
     },
     {
       id: "policy",
@@ -372,7 +373,7 @@ const prompt = definePrompt({
     {
       id: "question",
       role: "user",
-      template: "{question}",
+      template: "{{question}}",
     },
   ],
 } as const);
@@ -401,8 +402,8 @@ const result = await prompt.generate({
 });
 ```
 
-The server should return the same JSON/YAML config shape used by `pai-sdk`.
-Validate uploads with `prompt-config.schema.json`.
+The server should return the shared JSON/YAML prompt-config shape. Validate
+uploads with `prompt-config.schema.json`.
 
 ## Scenario 10: Local OpenAI Smoke Test
 
@@ -441,8 +442,8 @@ name: support-triage
 model: openai/gpt-4.1-mini
 params:
   temperature: 0
-system: "You triage tickets for {company}."
-user: "Ticket: {ticket}"
+system: "You triage tickets for {{company}}."
+user: "Ticket: {{ticket}}"
 ```
 
 Simple form defaults:
@@ -460,13 +461,13 @@ messages:
   - id: instructions
     role: system
     optimize: true
-    template: "You triage tickets for {company}."
+    template: "You triage tickets for {{company}}."
   - id: policy
     role: system
     content: "Never reveal internal data."
   - id: ticket
     role: user
-    template: "Ticket: {ticket}"
+    template: "Ticket: {{ticket}}"
 ```
 
 Use general form for:
@@ -484,23 +485,28 @@ Each message must have exactly one of `template` or `content`.
 Supported:
 
 ```txt
-Hello {name}
-Literal braces: {{ and }}
+Hello {{name}}
+Hello {{ name }}
+JSON is literal: {"field": "{value}"}
+Literal mustache tag: \{{name}}
 ```
 
 Rejected:
 
 ```txt
-{}
-{0}
-{user.name}
-{items[0]}
-{name:>10}
-{name!r}
+{{}}
+{{0}}
+{{user.name}}
+{{items[0]}}
+{{name:>10}}
+{{name!r}}
+{{#items}}
+{{{raw}}}
 ```
 
-This intentionally small syntax keeps templates portable across Python and
-TypeScript.
+Plain `{name}` is not a placeholder; it renders as literal text. This
+intentionally small syntax keeps templates portable across Python and
+TypeScript without pulling in full Mustache semantics.
 
 ## API Cheat Sheet
 

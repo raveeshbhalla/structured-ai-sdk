@@ -476,7 +476,7 @@ function typedFactory(role: PromptRole) {
 }
 
 function escapeLiteralTemplate(content: string): string {
-  return content.replaceAll("{", "{{").replaceAll("}", "}}");
+  return content.replaceAll("{{", "\\{{");
 }
 
 function normalizeParams(params: Record<string, unknown>): Record<string, unknown> {

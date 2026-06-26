@@ -51,14 +51,14 @@ const CONFIG = {
       id: "instructions",
       role: "system",
       optimize: true,
-      template: "You triage tickets for {company}. Be decisive.",
+      template: "You triage tickets for {{company}}. Be decisive.",
     },
     {
       id: "policy",
       role: "system",
       content: "Never reveal {internal} data.",
     },
-    { id: "ticket", role: "user", template: "Ticket: {ticket}" },
+    { id: "ticket", role: "user", template: "Ticket: {{ticket}}" },
   ],
 } as const;
 
@@ -66,7 +66,7 @@ const TOOL_CONFIG = {
   name: "weather-helper",
   model: "mock-model",
   system: "Answer using tools when needed.",
-  user: "Question: {q}",
+  user: "Question: {{q}}",
   tools: {
     get_weather: {
       description: "Get current weather. Call when asked about conditions.",
@@ -90,33 +90,57 @@ const TOOL_CONFIG = {
 } as const;
 
 describe("template engine", () => {
-  it("extracts variables in order and ignores escaped braces", () => {
-    expect(extractVariables("{a} then {b} then {a}")).toEqual(["a", "b"]);
-    expect(extractVariables("escaped {{not_a_var}} but {real}")).toEqual([
+  it("extracts mustache variables in order and ignores escaped delimiters", () => {
+    expect(extractVariables("{{a}} then {{ b }} then {{a}}")).toEqual([
+      "a",
+      "b",
+    ]);
+    expect(extractVariables("escaped \\{{not_a_var}} but {{real}}")).toEqual([
       "real",
     ]);
     expect(extractVariables("no vars")).toEqual([]);
+    expect(extractVariables("old single braces stay literal: {ticket}")).toEqual([]);
   });
 
   it("rejects non-portable template syntax", () => {
-    for (const template of ["{}", "{0}", "{a.b}", "{a[0]}", "{a:>10}", "{a!r}", "{unclosed"]) {
+    for (const template of [
+      "{{}}",
+      "{{ }}",
+      "{{0}}",
+      "{{a.b}}",
+      "{{a[0]}}",
+      "{{a:>10}}",
+      "{{a!r}}",
+      "{{{raw}}}",
+      "{{#items}}",
+      "{{/items}}",
+      "{{unclosed",
+    ]) {
       expect(() => extractVariables(template)).toThrow(TemplateError);
     }
   });
 
   it("renders with required variables and ignores extras", () => {
-    expect(renderTemplate("Hi {name}!", { name: "Ada", extra: "ok" })).toBe(
+    expect(renderTemplate("Hi {{name}}!", { name: "Ada", extra: "ok" })).toBe(
       "Hi Ada!",
     );
-    expect(renderTemplate("{{literal}} {x}", { x: 1 })).toBe("{literal} 1");
-    expect(() => renderTemplate("Hi {name}!", {})).toThrow(/name/);
+    expect(renderTemplate("\\{{literal}} {{ x }}", { x: 1 })).toBe(
+      "{{literal}} 1",
+    );
+    expect(renderTemplate('Use JSON: {"ticket": "{ticket}"} for {{name}}', {
+      name: "Ada",
+    })).toBe('Use JSON: {"ticket": "{ticket}"} for Ada');
+    expect(renderTemplate("Ticket: {ticket}", { ticket: "It broke" })).toBe(
+      "Ticket: {ticket}",
+    );
+    expect(() => renderTemplate("Hi {{name}}!", {})).toThrow(/name/);
   });
 });
 
 describe("typed messages and traces", () => {
   it("renders typed messages and preserves metadata in dumps", () => {
     const message = TypedSystemMessage({
-      template: "You help with {topic}.",
+      template: "You help with {{topic}}.",
       variables: { topic: "taxes" },
       optimize: true,
       id: "instructions",
@@ -124,7 +148,7 @@ describe("typed messages and traces", () => {
 
     expect(message.content).toBe("You help with taxes.");
     const dumped = dumpMessages([message]);
-    expect(dumped[0]?.template).toBe("You help with {topic}.");
+    expect(dumped[0]?.template).toBe("You help with {{topic}}.");
     expect(dumped[0]?.variables).toEqual({ topic: "taxes" });
     expect(loadMessages(dumped)[0]?.content).toBe("You help with taxes.");
   });
@@ -180,8 +204,8 @@ describe("prompt configs", () => {
       name: "triage",
       model: "mock-model",
       output: { urgency: ["low", "high"] },
-      system: "You triage tickets for {company}. Be decisive.",
-      user: "Ticket: {ticket}",
+      system: "You triage tickets for {{company}}. Be decisive.",
+      user: "Ticket: {{ticket}}",
     });
 
     expect(prompt.toDict().messages.map((message) => message.id)).toEqual([
@@ -197,12 +221,12 @@ describe("prompt configs", () => {
 
     const evolved = prompt.withTemplate(
       "system",
-      "Best triager for {company} ever.",
+      "Best triager for {{company}} ever.",
     );
     expect(evolved.render({ company: "Acme", ticket: "x" })[0]?.content).toContain(
       "Best triager",
     );
-    expect(() => prompt.withTemplate("user", "Changed: {ticket}")).toThrow(
+    expect(() => prompt.withTemplate("user", "Changed: {{ticket}}")).toThrow(
       /not marked optimize/,
     );
     expect(() => prompt.withTemplate("system", "No variables now.")).toThrow(
