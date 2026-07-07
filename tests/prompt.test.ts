@@ -10,12 +10,15 @@ import {
   PromptError,
   TemplateError,
   TypedSystemMessage,
+  applyCandidate,
   compileOutputShorthand,
   definePrompt,
   dumpMessages,
   extractVariables,
+  listOptimizerTargets,
   loadMessages,
   loadPrompt,
+  readCandidate,
   renderTemplate,
 } from "../src";
 
@@ -50,7 +53,6 @@ const CONFIG = {
     {
       id: "instructions",
       role: "system",
-      optimize: true,
       template: "You triage tickets for {{company}}. Be decisive.",
     },
     {
@@ -70,8 +72,8 @@ const TOOL_CONFIG = {
   tools: {
     get_weather: {
       description: "Get current weather. Call when asked about conditions.",
-      optimize: true,
       input: { city: "string" },
+      output: { temp_f: "number" },
     },
     search_docs: {
       description: "Search documentation.",
@@ -107,10 +109,10 @@ describe("template engine", () => {
       "{{a:>10}}",
       "{{a!r}}",
       "{{unclosed",
-      "unopened}}",
     ]) {
       expect(() => extractVariables(template)).toThrow(TemplateError);
     }
+    expect(extractVariables("unopened}} is literal")).toEqual([]);
   });
 
   it("renders with required variables and ignores extras", () => {
@@ -122,6 +124,16 @@ describe("template engine", () => {
     );
     expect(() => renderTemplate("Hi {{name}}!", {})).toThrow(/name/);
   });
+
+  it("supports escaped mustache literals and unicode variables", () => {
+    const template = "Use \\{{name}} literally, then {{actual}}.";
+    expect(extractVariables(template)).toEqual(["actual"]);
+    expect(renderTemplate(template, { actual: "render" })).toBe(
+      "Use {{name}} literally, then render.",
+    );
+    expect(extractVariables("{{café}} and {{ 变量 }}")).toEqual(["café", "变量"]);
+    expect(renderTemplate("{{café}}!", { "café": "München" })).toBe("München!");
+  });
 });
 
 describe("typed messages and traces", () => {
@@ -129,7 +141,6 @@ describe("typed messages and traces", () => {
     const message = TypedSystemMessage({
       template: "You help with {{topic}}.",
       variables: { topic: "taxes" },
-      optimize: true,
       id: "instructions",
     });
 
@@ -146,9 +157,8 @@ describe("prompt configs", () => {
     const prompt = loadPrompt(CONFIG);
 
     expect(prompt.variables).toEqual(["company", "ticket"]);
-    expect(prompt.optimizableMessages().map((message) => message.id)).toEqual([
-      "instructions",
-    ]);
+    expect(prompt.specVersion).toBe("pai.prompt.v1");
+    expect(listOptimizerTargets(prompt)).toContain("message:instructions");
     expect(prompt.contentHash()).toHaveLength(16);
 
     const messages = prompt.render({
@@ -199,8 +209,7 @@ describe("prompt configs", () => {
       "system",
       "user",
     ]);
-    expect(prompt.toDict().messages[0]?.optimize).toBe(true);
-    expect(prompt.toDict().messages[1]?.optimize).toBeUndefined();
+    expect(prompt.toDict().specVersion).toBe("pai.prompt.v1");
     expect(prompt.toDict().output?.schema).toMatchObject({
       type: "object",
       additionalProperties: false,
@@ -213,9 +222,8 @@ describe("prompt configs", () => {
     expect(evolved.render({ company: "Acme", ticket: "x" })[0]?.content).toContain(
       "Best triager",
     );
-    expect(() => prompt.withTemplate("user", "Changed: {{ticket}}")).toThrow(
-      /not marked optimize/,
-    );
+    const evolvedUser = prompt.withTemplate("user", "Changed: {{ticket}}");
+    expect(evolvedUser.toDict().messages[1]?.template).toBe("Changed: {{ticket}}");
     expect(() => prompt.withTemplate("system", "No variables now.")).toThrow(
       /preserve the variable set/,
     );
@@ -318,19 +326,73 @@ describe("AI SDK delegation", () => {
     ).toThrow(/undeclared tools/);
   });
 
-  it("rewrites only optimizable tool descriptions", () => {
+  it("rewrites tool descriptions non-destructively", () => {
     const prompt = definePrompt(TOOL_CONFIG);
     const evolved = prompt.withToolDescription(
       "get_weather",
       "Fetch live weather; always call before answering weather questions.",
     );
 
-    expect(evolved.toDict().tools.get_weather?.description).toContain("always call");
-    expect(prompt.toDict().tools.get_weather?.description).toContain("Get current");
+    expect(evolved.toDict().tools?.get_weather?.description).toContain("always call");
+    expect(prompt.toDict().tools?.get_weather?.description).toContain("Get current");
     expect(evolved.contentHash()).not.toBe(prompt.contentHash());
-    expect(() => prompt.withToolDescription("search_docs", "x")).toThrow(
-      /not marked optimize/,
-    );
     expect(() => prompt.withToolDescription("nope", "x")).toThrow(/No tool named/);
+  });
+
+  it("supports skills, input schemas, and candidate dicts", () => {
+    const prompt = definePrompt({
+      name: "support",
+      input: { company: "string", ticket: "string" },
+      system: "You support {{company}}.",
+      user: "Ticket: {{ticket}}",
+      skills: {
+        refunds: {
+          description: "Apply when money comes up.",
+          instructions: "Refund per {{company}} policy.",
+        },
+      },
+    } as const);
+
+    expect(prompt.variables).toEqual(["company", "ticket"]);
+    const rendered = prompt.render({ company: "Acme", ticket: "Refund me" });
+    expect(rendered.map((message) => message.id)).toEqual([
+      "system",
+      "skill:refunds",
+      "user",
+    ]);
+    expect(rendered[1]?.content).toBe(
+      "Skill: refunds\nApply when money comes up.\n\nRefund per Acme policy.",
+    );
+    expect(() =>
+      prompt.render({ company: "Acme", ticket: "x", extra: 1 } as any),
+    ).toThrow(/unknown input fields/);
+
+    const single = prompt.renderMessage("user", { ticket: "Follow-up" });
+    expect(single.content).toBe("Ticket: Follow-up");
+
+    const seed = readCandidate(prompt, [
+      "message:system",
+      "skill:refunds.instructions",
+    ]);
+    expect(seed).toEqual({
+      "message:system": "You support {{company}}.",
+      "skill:refunds.instructions": "Refund per {{company}} policy.",
+    });
+    const evolved = applyCandidate(prompt, {
+      "message:system": "You are {{company}}'s best agent.",
+      "skill:refunds.instructions": "Refund within {{company}} limits.",
+    });
+    expect(evolved.contentHash()).not.toBe(prompt.contentHash());
+    expect(loadPrompt(evolved.toDict() as any).contentHash()).toBe(
+      evolved.contentHash(),
+    );
+    expect(() =>
+      applyCandidate(prompt, { "message:system": "No variables." }),
+    ).toThrow(/preserve the variable set/);
+    expect(() => loadPrompt({
+      name: "x",
+      specVersion: "pai.prompt.v2",
+      user: "hi",
+    } as any)).toThrow();
   });
 });

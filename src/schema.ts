@@ -1,192 +1,428 @@
 import { PromptError } from "./errors";
 
+// Vendored byte-for-byte from pai-sdk's packaged prompt-config.schema.json
+// (the repo-root copy is the canonical vendored file; a test asserts this
+// constant stays deep-equal to it). See spec/README.md.
 export const PROMPT_CONFIG_SCHEMA = {
-  $schema: "http://json-schema.org/draft-07/schema#",
-  title: "pai-sdk prompt config",
-  description:
-    "A prompt definition: model + params + output schema + message templates with {{variable}} slots. Simple form: top-level system/user. General form: a messages list.",
-  type: "object",
-  required: ["name"],
-  additionalProperties: false,
-  properties: {
-    name: {
-      type: "string",
-      description: "Prompt name (identifies it in logs and traces).",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "pai prompt document",
+  "description": "A portable prompt document (specVersion pai.prompt.v1): model + params + optional input/output schemas + message templates with {{variable}} slots + tool interfaces + skills. Simple form: top-level system/user. General form: a messages list. Runs identically in pai-sdk (Python) and structured-ai-sdk (TypeScript).",
+  "type": "object",
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "specVersion": {
+      "const": "pai.prompt.v1",
+      "description": "Prompt-document spec version. Optional on input (assumed pai.prompt.v1); always emitted on output."
     },
-    version: {
-      type: ["string", "integer"],
-      description: "Optional version marker.",
+    "name": {
+      "type": "string",
+      "description": "Prompt name (identifies it in logs and traces)."
     },
-    description: { type: "string" },
-    model: {
-      description:
-        "provider/model-id string or AI SDK model reference. Optional; can be supplied at call time instead.",
+    "version": {
+      "type": [
+        "string",
+        "integer"
+      ],
+      "description": "Optional version marker."
     },
-    params: {
-      type: "object",
-      description:
-        "generate_text keyword arguments applied on every call (per-call overrides win).",
-      properties: {
-        max_output_tokens: { type: "integer", minimum: 1 },
-        temperature: { type: "number" },
-        top_p: { type: "number" },
-        top_k: { type: "integer" },
-        presence_penalty: { type: "number" },
-        frequency_penalty: { type: "number" },
-        stop_sequences: { type: "array", items: { type: "string" } },
-        seed: { type: "integer" },
-        max_retries: { type: "integer", minimum: 0 },
-      },
-      additionalProperties: true,
+    "description": {
+      "type": "string"
     },
-    output: {
-      description:
-        "Structured output: either field-type shorthand or a full JSON Schema via {schema: {...}}.",
-      oneOf: [
-        {
-          type: "object",
-          required: ["schema"],
-          additionalProperties: false,
-          properties: {
-            schema: { type: "object" },
-            name: { type: "string" },
-            description: { type: "string" },
-          },
+    "model": {
+      "type": "string",
+      "description": "provider/model-id string, e.g. 'anthropic/claude-haiku-4-5'. Optional — can be supplied at call time instead.",
+      "examples": [
+        "anthropic/claude-haiku-4-5",
+        "openai/gpt-5.4-mini",
+        "google/gemini-2.5-flash"
+      ]
+    },
+    "params": {
+      "type": "object",
+      "description": "generate_text keyword arguments applied on every call (per-call overrides win).",
+      "properties": {
+        "max_output_tokens": {
+          "type": "integer",
+          "minimum": 1
         },
+        "temperature": {
+          "type": "number"
+        },
+        "top_p": {
+          "type": "number"
+        },
+        "top_k": {
+          "type": "integer"
+        },
+        "presence_penalty": {
+          "type": "number"
+        },
+        "frequency_penalty": {
+          "type": "number"
+        },
+        "stop_sequences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "seed": {
+          "type": "integer"
+        },
+        "max_retries": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": true
+    },
+    "input": {
+      "description": "Structured input signature: either field-type shorthand ({field: string|number|integer|boolean|'<type>[]'|[enum,...]|nested mapping}) or a full JSON Schema via {schema: {...}}. Shorthand fields are all required; use full JSON Schema for optional fields.",
+      "oneOf": [
         {
-          allOf: [
-            { $ref: "#/definitions/outputShorthand" },
-            { not: { required: ["schema"] } },
+          "type": "object",
+          "required": [
+            "schema"
           ],
-        },
-      ],
-    },
-    system: {
-      $ref: "#/definitions/simpleMessage",
-      description:
-        "Simple form: the system prompt template. Optimizable by default.",
-    },
-    user: {
-      $ref: "#/definitions/simpleMessage",
-      description: "Simple form: the user message template. Never optimized.",
-    },
-    messages: {
-      type: "array",
-      minItems: 1,
-      items: { $ref: "#/definitions/message" },
-    },
-    tools: {
-      type: "object",
-      additionalProperties: { $ref: "#/definitions/tool" },
-    },
-    tool_choice: {
-      oneOf: [
-        { enum: ["auto", "none", "required"] },
-        {
-          type: "object",
-          required: ["type", "tool_name"],
-          additionalProperties: false,
-          properties: {
-            type: { const: "tool" },
-            tool_name: { type: "string" },
-          },
-        },
-      ],
-    },
-    max_steps: {
-      type: "integer",
-      minimum: 1,
-      description: "Tool-loop step budget.",
-    },
-  },
-  definitions: {
-    templateString: {
-      type: "string",
-      description:
-        "Text with Mustache-style {{variable}} placeholders. Plain {{name}} only; single braces are literal text.",
-    },
-    simpleMessage: {
-      oneOf: [
-        { $ref: "#/definitions/templateString" },
-        {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            template: { $ref: "#/definitions/templateString" },
-            content: {
-              type: "string",
-              description: "Literal text; no interpolation, braces left alone.",
+          "additionalProperties": false,
+          "properties": {
+            "schema": {
+              "type": "object",
+              "description": "Full JSON Schema for the input object."
             },
-            optimize: { type: "boolean" },
-            id: { type: "string" },
-          },
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            }
+          }
         },
-      ],
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/outputShorthand"
+            },
+            {
+              "not": {
+                "required": [
+                  "schema"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     },
-    message: {
-      type: "object",
-      required: ["role"],
-      additionalProperties: false,
-      properties: {
-        role: { enum: ["system", "user", "assistant"] },
-        template: { $ref: "#/definitions/templateString" },
-        content: { type: "string" },
-        optimize: { type: "boolean", default: false },
-        id: { type: "string" },
+    "output": {
+      "description": "Structured output: either field-type shorthand ({field: string|number|integer|boolean|'<type>[]'|[enum,...]|nested mapping}) or a full JSON Schema via {schema: {...}}.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "schema"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "schema": {
+              "type": "object",
+              "description": "Full JSON Schema for the output object."
+            },
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/definitions/outputShorthand"
+            },
+            {
+              "not": {
+                "required": [
+                  "schema"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "system": {
+      "$ref": "#/definitions/simpleMessage",
+      "description": "Simple form: the system prompt template. Mutually exclusive with messages:."
+    },
+    "user": {
+      "$ref": "#/definitions/simpleMessage",
+      "description": "Simple form: the user message template. Mutually exclusive with messages:."
+    },
+    "messages": {
+      "type": "array",
+      "minItems": 1,
+      "description": "General form: explicit message list (multiple system blocks, few-shot assistant turns, stable ids). Mutually exclusive with top-level system/user.",
+      "items": {
+        "$ref": "#/definitions/message"
+      }
+    },
+    "tools": {
+      "type": "object",
+      "description": "Tool interfaces, keyed by tool name. Behavior binds at call time via handlers={name: fn}; declared tools without a handler are client-side.",
+      "additionalProperties": {
+        "$ref": "#/definitions/tool"
+      }
+    },
+    "tool_choice": {
+      "description": "How the model may use the declared tools.",
+      "oneOf": [
+        {
+          "enum": [
+            "auto",
+            "none",
+            "required"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "type",
+            "tool_name"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "tool"
+            },
+            "tool_name": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "max_steps": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Tool-loop step budget (compiles to stop_when=step_count_is(n))."
+    },
+    "skills": {
+      "type": "object",
+      "description": "Skills, keyed by name (letters, digits, '-', '_'). Each renders as a system message with id 'skill:<name>' after the last declared system message. description = when to apply (literal prose); instructions = how (template). Both are optimizer-addressable text; the name is the contract.",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
       },
-      oneOf: [
+      "additionalProperties": {
+        "$ref": "#/definitions/skill"
+      }
+    }
+  },
+  "definitions": {
+    "templateString": {
+      "type": "string",
+      "description": "Text with Mustache-style {{variable}} placeholders. Plain {{name}} only; single braces are literal text."
+    },
+    "simpleMessage": {
+      "oneOf": [
         {
-          required: ["template"],
-          not: { required: ["content"] },
+          "$ref": "#/definitions/templateString"
         },
         {
-          required: ["content"],
-          not: { required: ["template"] },
-        },
-      ],
-    },
-    outputFieldType: {
-      oneOf: [
-        { type: "null" },
-        {
-          type: "string",
-          pattern: "^(string|number|integer|int|boolean|bool)(\\[\\])*$",
-        },
-        { type: "array", minItems: 1 },
-        { $ref: "#/definitions/outputShorthand" },
-      ],
-    },
-    outputShorthand: {
-      type: "object",
-      minProperties: 1,
-      additionalProperties: { $ref: "#/definitions/outputFieldType" },
-    },
-    tool: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        description: { type: "string" },
-        optimize: { type: "boolean", default: false },
-        input: {
-          oneOf: [
-            {
-              type: "object",
-              required: ["schema"],
-              additionalProperties: false,
-              properties: { schema: { type: "object" } },
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "template": {
+              "$ref": "#/definitions/templateString"
             },
+            "content": {
+              "type": "string",
+              "description": "Literal text — no interpolation, braces left alone."
+            },
+            "id": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "message": {
+      "type": "object",
+      "required": [
+        "role"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "enum": [
+            "system",
+            "user",
+            "assistant"
+          ]
+        },
+        "template": {
+          "$ref": "#/definitions/templateString"
+        },
+        "content": {
+          "type": "string",
+          "description": "Literal text — no interpolation."
+        },
+        "id": {
+          "type": "string",
+          "description": "Stable id for addressing this message (e.g. with_template)."
+        }
+      },
+      "oneOf": [
+        {
+          "required": [
+            "template"
+          ],
+          "not": {
+            "required": [
+              "content"
+            ]
+          }
+        },
+        {
+          "required": [
+            "content"
+          ],
+          "not": {
+            "required": [
+              "template"
+            ]
+          }
+        }
+      ]
+    },
+    "outputFieldType": {
+      "description": "string | number | integer | boolean (null means string), '<type>[]' for arrays, a list of literals for an enum, or a nested mapping for a nested object.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^(string|number|integer|int|boolean|bool)(\\[\\])*$"
+        },
+        {
+          "type": "array",
+          "minItems": 1
+        },
+        {
+          "$ref": "#/definitions/outputShorthand"
+        }
+      ]
+    },
+    "outputShorthand": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "$ref": "#/definitions/outputFieldType"
+      }
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "What the tool does AND when to call it. Optimizer runs may target this description by tool name; the tool name and input schema are the contract and never change."
+        },
+        "input": {
+          "description": "Input schema: field-type shorthand (same grammar as output:) or full JSON Schema via {schema: {...}}.",
+          "oneOf": [
             {
-              allOf: [
-                { $ref: "#/definitions/outputShorthand" },
-                { not: { required: ["schema"] } },
+              "type": "object",
+              "required": [
+                "schema"
               ],
+              "additionalProperties": false,
+              "properties": {
+                "schema": {
+                  "type": "object"
+                }
+              }
             },
-          ],
+            {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/outputShorthand"
+                },
+                {
+                  "not": {
+                    "required": [
+                      "schema"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
         },
-        strict: { type: "boolean" },
-      },
+        "strict": {
+          "type": "boolean"
+        },
+        "output": {
+          "description": "Declared result schema: field-type shorthand or full JSON Schema via {schema: {...}}. Interface documentation and typing data; not enforced against handler return values at run time.",
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "schema"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/outputShorthand"
+                },
+                {
+                  "not": {
+                    "required": [
+                      "schema"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
     },
-  },
+    "skill": {
+      "type": "object",
+      "required": [
+        "description",
+        "instructions"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "When this skill applies. Literal prose (braces render as-is)."
+        },
+        "instructions": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/templateString"
+            }
+          ],
+          "description": "How to apply the skill. {{variables}} join the prompt's input contract."
+        }
+      }
+    }
+  }
 } as const;
 
 const SHORTHAND_TYPES: Record<string, Record<string, string>> = {

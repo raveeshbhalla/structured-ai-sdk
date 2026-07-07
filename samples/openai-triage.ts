@@ -37,7 +37,6 @@ console.log(
       renderedMessages: prompt.render(variables).map((message) => ({
         id: message.id,
         role: message.role,
-        optimize: message.optimize,
         content: message.content,
         variables: message.variables,
       })),

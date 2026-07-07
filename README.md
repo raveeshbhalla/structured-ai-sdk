@@ -2,12 +2,17 @@
 
 Structured prompt configs and typed templates for the Vercel AI SDK.
 
-This package is a minimal wrapper around `ai`: it loads `pai-sdk`-compatible
-JSON/YAML prompt definitions, renders typed trace messages, enforces
-optimizer-safe mutations, and delegates generation to AI SDK core.
+This package is a minimal wrapper around `ai`: it runs **pai prompt
+documents** (`specVersion: pai.prompt.v1`) — the same JSON/YAML files
+`pai-sdk` (Python) runs — renders typed trace messages, enforces
+optimizer-safe mutations, and delegates generation to AI SDK core
+(`generateText` / `streamText` / `Output.object` / `tool`).
 
-It is for teams that want DSPy-style prompt signatures and optimizer-friendly
-prompt configs while still using the TypeScript AI SDK for actual model calls.
+Cross-language parity is enforced, not aspirational: the JSON Schema is
+vendored byte-for-byte from pai-sdk, `contentHash()` implements the spec'd
+canonical serialization so hashes match Python's exactly, and the shared
+conformance fixtures in `spec/conformance/` (copied verbatim from pai-sdk)
+run in this repo's test suite. See `spec/README.md`.
 
 ## Install
 
@@ -60,14 +65,24 @@ types from the prompt config. JSON/YAML prompt files use the same schema as
 ## What You Get
 
 - `definePrompt`, `loadPrompt`, and `loadPromptUrl` for code, file, and hosted
-  prompt configs.
-- Portable Mustache-style `{{variable}}` templates for system, user, and assistant messages. Single braces are literal text, so JSON examples can appear naturally in templates.
-- Structured output shorthand that compiles to JSON Schema.
-- Tool interface configs that bind to executable handlers at call time.
-- Immutable prompt mutations for optimizers: `withTemplate` and
-  `withToolDescription`.
-- Typed rendered messages for traces: template, variables, id, optimize flag,
-  and rendered content.
+  prompt documents.
+- Portable Mustache-style `{{variable}}` templates (with `\{{` escaping and
+  unicode variable names) for system, user, and assistant messages. Single
+  braces are literal text, so JSON examples can appear naturally in templates.
+- Structured `input`/`output` shorthand that compiles to JSON Schema, with
+  render-time input validation.
+- Tool interface configs — description + input/output schemas — that bind to
+  executable handlers at call time.
+- Skills: named, addressable prose blocks (`description` = when,
+  `instructions` = templated how) rendered as `skill:<name>` system messages.
+- Immutable prompt mutations for optimizers: `withTemplate`,
+  `withToolDescription`, `withSkillDescription`, `withSkillInstructions` —
+  plus `readCandidate` / `applyCandidate` over `{address: text}` dicts (the
+  GEPA `optimize_anything` candidate shape) and `renderMessage` for typed
+  mid-conversation turns. Documents never carry optimization intent; optimizer
+  scripts choose target addresses per run.
+- Typed rendered messages for traces: template, variables, id, and rendered
+  content.
 - Direct delegation to AI SDK `generateText`, `streamText`, `Output.object`,
   `tool`, `jsonSchema`, and `isStepCount`.
 
