@@ -82,7 +82,11 @@ await db.traces.insert({
 });
 ```
 
-Because the message wire format and the document hash are shared with
+Tracing is plumbing here too: because this package delegates inference to
+the AI SDK, its native telemetry/observability integrations (OpenTelemetry
+exporters, Braintrust, Langfuse, ...) apply to every `generateText`/
+`streamText` call it makes — connect your exporter once, no extra API.
+And because the message wire format and the document hash are shared with
 pai-sdk, those logs are directly consumable by the Python-side optimization
 tooling: recreate replayable history from stored messages (or straight from
 an OTEL backend via `trace_from_otel_spans`), replay spans under candidate
