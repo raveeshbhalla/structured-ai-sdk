@@ -11,7 +11,6 @@ import type { PromptRole } from "./types";
 export type TypedMessageFields = {
   template: string;
   variables: Record<string, unknown>;
-  optimize: boolean;
   id?: string;
 };
 
@@ -41,7 +40,6 @@ export type TypedModelMessage =
 export type TypedMessageInput = {
   template: string;
   variables?: Record<string, unknown>;
-  optimize?: boolean;
   id?: string;
   content?: string;
 };
@@ -57,7 +55,6 @@ function createTypedMessage(
     content,
     template: input.template,
     variables,
-    optimize: input.optimize ?? false,
     id: input.id,
   }) as TypedModelMessage;
 }

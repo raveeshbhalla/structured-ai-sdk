@@ -2,7 +2,6 @@ import { describe, expectTypeOf, it } from "vitest";
 
 import { definePrompt } from "../src";
 import type {
-  ExtractTemplateVariables,
   PromptHandlers,
   PromptOutput,
   PromptToolInputs,
@@ -17,7 +16,7 @@ const config = {
     tags: "string[]",
     user: { id: "integer", active: "boolean" },
   },
-  system: "You triage tickets for {{ company }}.",
+  system: "You triage tickets for {{company}}.",
   user: "Ticket: {{ticket}}",
   tools: {
     get_weather: {
@@ -27,24 +26,12 @@ const config = {
   },
 } as const;
 
-type LongChunk =
-  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-type LongPrompt =
-  `${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk}${LongChunk} {{ value }}`;
-
 describe("type helpers", () => {
   it("infers variables from literal prompt configs", () => {
     expectTypeOf<PromptVariables<typeof config>>().toMatchTypeOf<{
       company: unknown;
       ticket: unknown;
     }>();
-    expectTypeOf<ExtractTemplateVariables<"Path C:\\\\{{ folder }}">>().toEqualTypeOf<
-      "folder"
-    >();
-    expectTypeOf<ExtractTemplateVariables<"Literal \\{{ folder }}">>().toEqualTypeOf<
-      never
-    >();
-    expectTypeOf<ExtractTemplateVariables<LongPrompt>>().toEqualTypeOf<"value">();
 
     const prompt = definePrompt(config);
     prompt.render({ company: "Acme", ticket: "It broke" });

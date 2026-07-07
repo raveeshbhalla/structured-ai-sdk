@@ -23,13 +23,14 @@ import {
   type TypedModelMessage,
 } from "./messages";
 import { PROMPT_CONFIG_SCHEMA, compileOutputShorthand } from "./schema";
-import { extractVariables } from "./template";
+import { escapeTemplateLiterals, extractVariables } from "./template";
 import type {
   PromptConfig,
   PromptHandlers,
   PromptMessageConfig,
   PromptOutput,
   PromptRole,
+  PromptSkillConfig,
   PromptToolConfig,
   PromptVariables,
   RuntimePromptVariables,
@@ -37,19 +38,47 @@ import type {
   ToolChoiceConfig,
 } from "./types";
 
-type NormalizedOutput = {
+export const PROMPT_SPEC_VERSION = "pai.prompt.v1";
+
+const SKILL_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+type NormalizedSchema = {
   schema: Record<string, unknown>;
   name?: string;
   description?: string;
 };
 
-type NormalizedPromptConfig = Omit<
-  PromptConfig,
-  "system" | "user" | "messages" | "output" | "tools"
-> & {
-  output?: NormalizedOutput;
+type NormalizedPromptConfig = {
+  specVersion: typeof PROMPT_SPEC_VERSION;
+  name: string;
+  version?: string | number;
+  description?: string;
+  model?: unknown;
+  params: Record<string, unknown>;
+  input?: NormalizedSchema;
+  output?: NormalizedSchema;
   messages: PromptMessageConfig[];
   tools: Record<string, PromptToolConfig>;
+  tool_choice?: ToolChoiceConfig;
+  max_steps?: number;
+  skills: Record<string, PromptSkillConfig>;
+};
+
+/** The serialized prompt document (`toDict()`): plain JSON, spec-shaped. */
+export type PromptDocument = {
+  specVersion: typeof PROMPT_SPEC_VERSION;
+  name: string;
+  version?: string | number;
+  description?: string;
+  model?: string;
+  params?: Record<string, unknown>;
+  input?: NormalizedSchema;
+  output?: NormalizedSchema;
+  messages: PromptMessageConfig[];
+  tools?: Record<string, PromptToolConfig>;
+  tool_choice?: ToolChoiceConfig;
+  max_steps?: number;
+  skills?: Record<string, PromptSkillConfig>;
 };
 
 type PromptCallOptions<C extends PromptConfig> = Record<string, unknown> & {
@@ -90,9 +119,14 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
     return this.config.name;
   }
 
+  get specVersion(): string {
+    return this.config.specVersion;
+  }
+
+  /** All template variables across messages and skills, in render order. */
   get variables(): string[] {
     const names: string[] = [];
-    for (const message of this.config.messages) {
+    for (const message of this.effectiveMessages()) {
       for (const name of messageVariables(message)) {
         if (!names.includes(name)) {
           names.push(name);
@@ -102,26 +136,97 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
     return names;
   }
 
-  optimizableMessages(): PromptMessageConfig[] {
-    return this.config.messages.filter((message) => message.optimize === true);
-  }
-
-  optimizableTools(): Record<string, PromptToolConfig> {
-    return Object.fromEntries(
-      Object.entries(this.config.tools).filter(([, config]) => config.optimize === true),
-    );
-  }
-
+  /**
+   * Stable candidate identity: sha256 of the canonical document JSON,
+   * truncated to 16 hex chars. The algorithm is spec'd (spec/README.md) so
+   * Python and TypeScript agree on every hash.
+   */
   contentHash(): string {
     return createHash("sha256")
-      .update(canonicalJson(this.toDict()))
+      .update(canonicalJson(this.toDict()), "utf8")
       .digest("hex")
       .slice(0, 16);
   }
 
-  toDict(): NormalizedPromptConfig {
-    return deepClone(this.config);
+  /** Serialize back to the portable document form (plain JSON). */
+  toDict(): PromptDocument {
+    const config = this.config;
+    const document: PromptDocument = {
+      specVersion: config.specVersion,
+      name: config.name,
+      messages: config.messages.map((message) => ({ ...message })),
+    };
+    if (config.version !== undefined) {
+      document.version = config.version;
+    }
+    if (config.description !== undefined) {
+      document.description = config.description;
+    }
+    // Runtime model objects are call-time concerns; only strings are data.
+    if (typeof config.model === "string") {
+      document.model = config.model;
+    }
+    if (Object.keys(config.params).length > 0) {
+      document.params = deepClone(config.params);
+    }
+    if (config.input !== undefined) {
+      document.input = deepClone(config.input);
+    }
+    if (config.output !== undefined) {
+      document.output = deepClone(config.output);
+    }
+    if (Object.keys(config.tools).length > 0) {
+      document.tools = deepClone(config.tools);
+    }
+    if (config.tool_choice !== undefined) {
+      document.tool_choice = deepClone(config.tool_choice);
+    }
+    if (config.max_steps !== undefined) {
+      document.max_steps = config.max_steps;
+    }
+    if (Object.keys(config.skills).length > 0) {
+      document.skills = deepClone(config.skills);
+    }
+    return document;
   }
+
+  inputSchema(): Record<string, unknown> | undefined {
+    return this.config.input?.schema;
+  }
+
+  /**
+   * Lightweight top-level validation for prompt input variables: required
+   * fields and `additionalProperties: false`, per the spec. Full JSON Schema
+   * validation is the caller's choice.
+   */
+  validateInputs(variables?: RuntimePromptVariables): RuntimePromptVariables {
+    const data = { ...(variables ?? {}) };
+    const schema = this.config.input?.schema;
+    if (!schema) {
+      return data;
+    }
+    const properties = schema.properties as Record<string, unknown> | undefined;
+    const required = (schema.required as string[] | undefined) ?? [];
+    const missing = required.filter((name) => !Object.hasOwn(data, name));
+    if (missing.length > 0) {
+      throw new PromptError(
+        `Prompt '${this.name}' is missing required input fields: ${missing.join(", ")}.`,
+      );
+    }
+    if (schema.additionalProperties === false && properties !== undefined) {
+      const extra = Object.keys(data)
+        .filter((name) => !Object.hasOwn(properties, name))
+        .sort();
+      if (extra.length > 0) {
+        throw new PromptError(
+          `Prompt '${this.name}' received unknown input fields: ${extra.join(", ")}.`,
+        );
+      }
+    }
+    return data;
+  }
+
+  // -- the optimization contract -------------------------------------------
 
   withTemplate(messageId: string, newTemplate: string): Prompt<C> {
     const index = this.config.messages.findIndex((message) => message.id === messageId);
@@ -130,76 +235,112 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
     }
 
     const message = this.config.messages[index]!;
-    if (message.optimize !== true) {
-      throw new PromptError(
-        `Message '${messageId}' is not marked optimize: true; it must not be rewritten.`,
-      );
-    }
     if (message.template === undefined) {
       throw new PromptError(`Message '${messageId}' has literal content, not a template.`);
     }
 
-    const oldVars = new Set(extractVariables(message.template));
-    const newVars = new Set(extractVariables(newTemplate));
-    if (!sameSet(oldVars, newVars)) {
-      throw new PromptError(
-        `Template mutation for '${messageId}' must preserve the variable set ${JSON.stringify([...oldVars].sort())}; got ${JSON.stringify([...newVars].sort())}.`,
-      );
-    }
+    assertSameVariables(
+      `Template mutation for '${messageId}'`,
+      message.template,
+      newTemplate,
+    );
 
-    const next = this.toDict();
+    const next = cloneConfig(this.config);
     next.messages[index] = { ...message, template: newTemplate };
-    return new Prompt(next as unknown as C);
+    return promptFromNormalized<C>(next);
   }
 
   withToolDescription(toolName: string, newDescription: string): Prompt<C> {
-    const toolConfig = this.config.tools[toolName];
+    const toolConfig = Object.hasOwn(this.config.tools, toolName)
+      ? this.config.tools[toolName]
+      : undefined;
     if (!toolConfig) {
       throw new PromptError(`No tool named '${toolName}'.`);
     }
-    if (toolConfig.optimize !== true) {
-      throw new PromptError(
-        `Tool '${toolName}' is not marked optimize: true; its description must not be rewritten.`,
-      );
-    }
 
-    const next = this.toDict();
+    const next = cloneConfig(this.config);
     next.tools[toolName] = { ...toolConfig, description: newDescription };
-    return new Prompt(next as unknown as C);
+    return promptFromNormalized<C>(next);
+  }
+
+  withSkillDescription(skillName: string, newDescription: string): Prompt<C> {
+    const skill = Object.hasOwn(this.config.skills, skillName)
+      ? this.config.skills[skillName]
+      : undefined;
+    if (!skill) {
+      throw new PromptError(`No skill named '${skillName}'.`);
+    }
+    const next = cloneConfig(this.config);
+    next.skills[skillName] = { ...skill, description: newDescription };
+    return promptFromNormalized<C>(next);
+  }
+
+  withSkillInstructions(skillName: string, newInstructions: string): Prompt<C> {
+    const skill = Object.hasOwn(this.config.skills, skillName)
+      ? this.config.skills[skillName]
+      : undefined;
+    if (!skill) {
+      throw new PromptError(`No skill named '${skillName}'.`);
+    }
+    assertSameVariables(
+      `Instructions mutation for skill '${skillName}'`,
+      skill.instructions,
+      newInstructions,
+    );
+    const next = cloneConfig(this.config);
+    next.skills[skillName] = { ...skill, instructions: newInstructions };
+    return promptFromNormalized<C>(next);
+  }
+
+  // -- rendering & execution -----------------------------------------------
+
+  /**
+   * Declared messages with skills rendered in as system messages. Skills
+   * follow the last declared system message (or lead when there is none), in
+   * declaration order — the sequence render() produces, per the spec.
+   */
+  effectiveMessages(): PromptMessageConfig[] {
+    return effectiveMessagesOf(this.config.messages, this.config.skills);
   }
 
   render(variables?: PromptVariables<C>): TypedModelMessage[] {
-    const bindings = (variables ?? {}) as RuntimePromptVariables;
-    const missing = this.variables.filter((name) => !(name in bindings));
+    let bindings = (variables ?? {}) as RuntimePromptVariables;
+    const missing = this.variables.filter((name) => !Object.hasOwn(bindings, name));
     if (missing.length > 0) {
       throw new PromptError(
         `Prompt '${this.name}' is missing variables: ${missing.join(", ")}.`,
       );
     }
+    bindings = this.validateInputs(bindings);
 
-    return this.config.messages.map((message) => {
-      const factory = typedFactory(message.role);
-      if (message.template !== undefined) {
-        const bound = Object.fromEntries(
-          messageVariables(message).map((name) => [name, bindings[name]]),
-        );
-        return factory({
-          template: message.template,
-          variables: bound,
-          optimize: message.optimize ?? false,
-          ...(message.id !== undefined ? { id: message.id } : {}),
-        });
-      }
+    return this.effectiveMessages().map((message) =>
+      renderPromptMessage(message, bindings),
+    );
+  }
 
-      const content = message.content ?? "";
-      return factory({
-        template: escapeLiteralTemplate(content),
-        variables: {},
-        optimize: message.optimize ?? false,
-        ...(message.id !== undefined ? { id: message.id } : {}),
-        content,
-      });
-    });
+  /**
+   * Render ONE message (or skill, via `skill:<name>`) from the document —
+   * for appending typed turns to an ongoing conversation. Only the message's
+   * own variables are required.
+   */
+  renderMessage(
+    messageId: string,
+    variables?: RuntimePromptVariables,
+  ): TypedModelMessage {
+    const message = this.effectiveMessages().find((entry) => entry.id === messageId);
+    if (!message) {
+      throw new PromptError(`No message with id '${messageId}'.`);
+    }
+    const bindings = variables ?? {};
+    const missing = messageVariables(message).filter(
+      (name) => !Object.hasOwn(bindings, name),
+    );
+    if (missing.length > 0) {
+      throw new PromptError(
+        `Message '${messageId}' is missing variables: ${missing.join(", ")}.`,
+      );
+    }
+    return renderPromptMessage(message, bindings);
   }
 
   async generate(
@@ -271,7 +412,7 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
 
     const boundHandlers = (handlers ?? {}) as Record<string, (...args: any[]) => unknown>;
     const unknownHandlers = Object.keys(boundHandlers).filter(
-      (name) => !(name in this.config.tools),
+      (name) => !Object.hasOwn(this.config.tools, name),
     );
     if (unknownHandlers.length > 0) {
       throw new PromptError(
@@ -282,15 +423,17 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
     if (Object.keys(this.config.tools).length > 0 && callOptions.tools === undefined) {
       callOptions.tools = Object.fromEntries(
         Object.entries(this.config.tools).map(([name, config]) => {
-          const execute = boundHandlers[name];
+          const execute = Object.hasOwn(boundHandlers, name)
+            ? boundHandlers[name]
+            : undefined;
           return [
             name,
             tool(
               omitUndefined({
-              description: config.description,
-              inputSchema: jsonSchema(toolInputSchema(config) as any),
-              strict: config.strict,
-              ...(execute ? { execute } : {}),
+                description: config.description,
+                inputSchema: jsonSchema(toolInputSchema(config) as any),
+                strict: config.strict,
+                ...(execute ? { execute } : {}),
               }) as any,
             ),
           ];
@@ -361,6 +504,92 @@ export async function loadPromptUrl(
   return new Prompt(parsePromptText(text, inferredFormat === "yaml" ? ".yaml" : ".json"));
 }
 
+function promptFromNormalized<C extends PromptConfig>(
+  config: NormalizedPromptConfig,
+): Prompt<C> {
+  return new Prompt(config as unknown as C);
+}
+
+function cloneConfig(config: NormalizedPromptConfig): NormalizedPromptConfig {
+  const { model, ...rest } = config;
+  const cloned = deepClone(rest) as NormalizedPromptConfig;
+  if (model !== undefined) {
+    cloned.model = model;
+  }
+  return cloned;
+}
+
+function assertSameVariables(label: string, before: string, after: string): void {
+  const oldVars = new Set(extractVariables(before));
+  const newVars = new Set(extractVariables(after));
+  if (!sameSet(oldVars, newVars)) {
+    throw new PromptError(
+      `${label} must preserve the variable set ${JSON.stringify([...oldVars].sort())}; got ${JSON.stringify([...newVars].sort())}.`,
+    );
+  }
+}
+
+function effectiveMessagesOf(
+  messages: readonly PromptMessageConfig[],
+  skills: Record<string, PromptSkillConfig>,
+): PromptMessageConfig[] {
+  const skillNames = Object.keys(skills);
+  if (skillNames.length === 0) {
+    return [...messages];
+  }
+  // Sorted-name order (never declaration order): key order is not semantic
+  // and the canonical hash sorts keys, so rendering must agree.
+  skillNames.sort(codePointCompare);
+  const skillMessages = skillNames.map((name) => skillMessage(name, skills[name]!));
+  let lastSystem = -1;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]!.role === "system") {
+      lastSystem = index;
+      break;
+    }
+  }
+  if (lastSystem === -1) {
+    return [...skillMessages, ...messages];
+  }
+  return [
+    ...messages.slice(0, lastSystem + 1),
+    ...skillMessages,
+    ...messages.slice(lastSystem + 1),
+  ];
+}
+
+function skillMessage(name: string, skill: PromptSkillConfig): PromptMessageConfig {
+  // Composition is part of the spec (spec/README.md): the description is
+  // literal prose (escaped), the instructions keep their placeholders.
+  const template = `Skill: ${name}\n${escapeTemplateLiterals(skill.description)}\n\n${skill.instructions}`;
+  return { role: "system", template, id: `skill:${name}` };
+}
+
+function renderPromptMessage(
+  message: PromptMessageConfig,
+  bindings: RuntimePromptVariables,
+): TypedModelMessage {
+  const factory = typedFactory(message.role);
+  if (message.template !== undefined) {
+    const bound = Object.fromEntries(
+      messageVariables(message).map((name) => [name, bindings[name]]),
+    );
+    return factory({
+      template: message.template,
+      variables: bound,
+      ...(message.id !== undefined ? { id: message.id } : {}),
+    });
+  }
+
+  const content = message.content ?? "";
+  return factory({
+    template: escapeTemplateLiterals(content),
+    variables: {},
+    ...(message.id !== undefined ? { id: message.id } : {}),
+    content,
+  });
+}
+
 function normalizePromptConfig(config: PromptConfig): NormalizedPromptConfig {
   assertSchemaValid(config);
   const { model, ...serializableConfig } = config;
@@ -383,7 +612,6 @@ function normalizePromptConfig(config: PromptConfig): NormalizedPromptConfig {
       messages.push({
         role: "system",
         id: "system",
-        optimize: true,
         ...simpleMessageEntry(system),
       });
     }
@@ -401,32 +629,62 @@ function normalizePromptConfig(config: PromptConfig): NormalizedPromptConfig {
   if (messages.length === 0) {
     throw new PromptError("A prompt needs messages: top-level system/user or messages.");
   }
-  validateMessages(messages);
+
+  const skills = data.skills ?? {};
+  for (const [name, skill] of Object.entries(skills)) {
+    if (!SKILL_NAME.test(name)) {
+      throw new PromptError(
+        `Invalid skill name '${name}' (letters, digits, '-', '_' only).`,
+      );
+    }
+    extractVariables(skill.instructions); // validate syntax eagerly
+  }
+
+  const input = data.input
+    ? "schema" in data.input
+      ? (data.input as NormalizedSchema)
+      : { schema: compileOutputShorthand(data.input as Record<string, unknown>) }
+    : undefined;
 
   const output = data.output
     ? "schema" in data.output
-      ? (data.output as NormalizedOutput)
+      ? (data.output as NormalizedSchema)
       : { schema: compileOutputShorthand(data.output as Record<string, unknown>) }
     : undefined;
 
   const tools = data.tools ?? {};
   for (const toolConfig of Object.values(tools)) {
-    toolInputSchema(toolConfig);
+    toolInputSchema(toolConfig); // compile eagerly so config errors surface
+    toolOutputSchema(toolConfig);
   }
 
-  const normalized = {
-    ...data,
+  const normalized: NormalizedPromptConfig = {
+    ...(data as Record<string, unknown>),
+    specVersion: PROMPT_SPEC_VERSION,
+    name: data.name,
+    params: data.params ?? {},
     messages,
     tools,
+    skills,
+    ...(input ? { input } : {}),
     ...(output ? { output } : {}),
-  };
+  } as NormalizedPromptConfig;
   delete (normalized as Partial<PromptConfig>).system;
   delete (normalized as Partial<PromptConfig>).user;
-  return normalized as NormalizedPromptConfig;
+
+  validateMessages(normalized);
+  validateInputSchemaCoverage(normalized);
+  return normalized;
 }
 
 function assertSchemaValid(config: PromptConfig): void {
-  if (!validatePromptConfig(config)) {
+  // Runtime model objects are call-time values, not document data; validate
+  // the serializable view (the document spec requires model to be a string).
+  const view: Record<string, unknown> = { ...config };
+  if (view.model !== undefined && typeof view.model !== "string") {
+    delete view.model;
+  }
+  if (!validatePromptConfig(view)) {
     const message = ajv.errorsText(validatePromptConfig.errors, {
       separator: "; ",
       dataVar: "prompt",
@@ -435,15 +693,8 @@ function assertSchemaValid(config: PromptConfig): void {
   }
 }
 
-function validateMessages(messages: PromptMessageConfig[]): void {
-  const ids = messages
-    .map((message) => message.id)
-    .filter((id): id is string => id !== undefined);
-  if (new Set(ids).size !== ids.length) {
-    throw new PromptError("Prompt message ids must be unique.");
-  }
-
-  for (const message of messages) {
+function validateMessages(config: NormalizedPromptConfig): void {
+  for (const message of config.messages) {
     const hasTemplate = message.template !== undefined;
     const hasContent = message.content !== undefined;
     if (hasTemplate === hasContent) {
@@ -452,6 +703,47 @@ function validateMessages(messages: PromptMessageConfig[]): void {
     if (message.template !== undefined) {
       extractVariables(message.template);
     }
+  }
+
+  const skillIds = Object.keys(config.skills).map((name) => `skill:${name}`);
+  const ids = [
+    ...config.messages
+      .map((message) => message.id)
+      .filter((id): id is string => id !== undefined),
+    ...skillIds,
+  ];
+  if (new Set(ids).size !== ids.length) {
+    throw new PromptError(
+      "Prompt message ids must be unique (skills reserve 'skill:<name>').",
+    );
+  }
+}
+
+function validateInputSchemaCoverage(config: NormalizedPromptConfig): void {
+  const schema = config.input?.schema;
+  if (!schema) {
+    return;
+  }
+  if (schema.type !== undefined && schema.type !== "object") {
+    throw new PromptError("Prompt input schema must be an object schema.");
+  }
+  const properties = schema.properties as Record<string, unknown> | undefined;
+  if (properties === undefined) {
+    return;
+  }
+  const names: string[] = [];
+  for (const message of effectiveMessagesOf(config.messages, config.skills)) {
+    for (const name of messageVariables(message)) {
+      if (!names.includes(name)) {
+        names.push(name);
+      }
+    }
+  }
+  const missing = names.filter((name) => !Object.hasOwn(properties, name));
+  if (missing.length > 0) {
+    throw new PromptError(
+      `Prompt input schema must declare template variables: ${missing.join(", ")}.`,
+    );
   }
 }
 
@@ -473,32 +765,6 @@ function typedFactory(role: PromptRole) {
     return TypedAssistantMessage;
   }
   return TypedUserMessage;
-}
-
-function escapeLiteralTemplate(content: string): string {
-  let escaped = "";
-  for (let index = 0; index < content.length; index += 1) {
-    if (!content.startsWith("{{", index)) {
-      escaped += content[index];
-      continue;
-    }
-
-    const backslashes = countBackslashesBefore(content, index);
-    escaped =
-      escaped.slice(0, -backslashes) +
-      "\\".repeat(backslashes * 2 + 1) +
-      "{{";
-    index += 1;
-  }
-  return escaped;
-}
-
-function countBackslashesBefore(value: string, index: number): number {
-  let count = 0;
-  for (let cursor = index - 1; cursor >= 0 && value[cursor] === "\\"; cursor -= 1) {
-    count += 1;
-  }
-  return count;
 }
 
 function normalizeParams(params: Record<string, unknown>): Record<string, unknown> {
@@ -539,6 +805,19 @@ function toolInputSchema(config: PromptToolConfig): Record<string, unknown> {
   return compileOutputShorthand(input);
 }
 
+export function toolOutputSchema(
+  config: PromptToolConfig,
+): Record<string, unknown> | undefined {
+  if (!config.output) {
+    return undefined;
+  }
+  const output = config.output as Record<string, unknown>;
+  if ("schema" in output) {
+    return output.schema as Record<string, unknown>;
+  }
+  return compileOutputShorthand(output);
+}
+
 function mapToolChoice(choice: ToolChoiceConfig): unknown {
   if (typeof choice === "string") {
     return choice;
@@ -575,17 +854,52 @@ function omitUndefined<T extends Record<string, unknown>>(value: T): T {
   ) as T;
 }
 
-function canonicalJson(value: unknown): string {
+function codePointCompare(left: string, right: string): number {
+  const leftPoints = [...left];
+  const rightPoints = [...right];
+  const length = Math.min(leftPoints.length, rightPoints.length);
+  for (let index = 0; index < length; index += 1) {
+    const diff = leftPoints[index]!.codePointAt(0)! - rightPoints[index]!.codePointAt(0)!;
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+  return leftPoints.length - rightPoints.length;
+}
+
+function canonicalNumber(value: number): string {
+  // Integral doubles print as plain digits (1e21 -> "1000000000000000000000",
+  // matching Python's int conversion); String() already matches the
+  // spec's ECMAScript formatting for everything else.
+  if (Number.isInteger(value)) {
+    return Object.is(value, -0) ? "0" : BigInt(value).toString();
+  }
+  return String(value);
+}
+
+/**
+ * The canonical JSON serialization used for contentHash(): sorted keys (by
+ * code point), compact separators, raw unicode, ECMAScript number formatting
+ * — byte-identical with pai-sdk's canonical_prompt_json (see spec/README.md).
+ */
+export function canonicalJson(value: unknown): string {
+  if (value === undefined) {
+    // Mirror JSON.stringify's array behavior; bare undefined has no JSON form.
+    return "null";
+  }
+  if (typeof value === "number") {
+    return canonicalNumber(value);
+  }
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(", ")}]`;
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
   }
   const entries = Object.entries(value as Record<string, unknown>)
     .filter(([, entry]) => entry !== undefined)
-    .sort(([left], [right]) => left.localeCompare(right));
+    .sort(([left], [right]) => codePointCompare(left, right));
   return `{${entries
-    .map(([key, entry]) => `${JSON.stringify(key)}: ${canonicalJson(entry)}`)
-    .join(", ")}}`;
+    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+    .join(",")}}`;
 }

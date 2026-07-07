@@ -2,12 +2,17 @@
 
 Structured prompt configs and typed templates for the Vercel AI SDK.
 
-This package is a minimal wrapper around `ai`: it loads shared prompt-config
-JSON/YAML definitions, renders typed trace messages, enforces optimizer-safe
-mutations, and delegates generation to AI SDK core.
+This package is a minimal wrapper around `ai`: it runs **pai prompt
+documents** (`specVersion: pai.prompt.v1`) — the same JSON/YAML files
+`pai-sdk` (Python) runs — renders typed trace messages, enforces
+optimizer-safe mutations, and delegates generation to AI SDK core
+(`generateText` / `streamText` / `Output.object` / `tool`).
 
-It is for teams that want DSPy-style prompt signatures and optimizer-friendly
-prompt configs while still using the TypeScript AI SDK for actual model calls.
+Cross-language parity is enforced, not aspirational: the JSON Schema is
+vendored byte-for-byte from pai-sdk, `contentHash()` implements the spec'd
+canonical serialization so hashes match Python's exactly, and the shared
+conformance fixtures in `spec/conformance/` (copied verbatim from pai-sdk)
+run in this repo's test suite. See `spec/README.md`.
 
 ## Install
 
@@ -54,20 +59,30 @@ console.log(triagePrompt.contentHash());
 ```
 
 `definePrompt({...} as const)` infers required variables and structured output
-types from strict mustache-style `{{variable}}` placeholders and the prompt
-config output schema.
+types from the prompt config. JSON/YAML prompt files use the same schema as
+`pai-sdk` prompt configs.
 
 ## What You Get
 
 - `definePrompt`, `loadPrompt`, and `loadPromptUrl` for code, file, and hosted
-  prompt configs.
-- Portable `{{variable}}` templates for system, user, and assistant messages.
-- Structured output shorthand that compiles to JSON Schema.
-- Tool interface configs that bind to executable handlers at call time.
-- Immutable prompt mutations for optimizers: `withTemplate` and
-  `withToolDescription`.
-- Typed rendered messages for traces: template, variables, id, optimize flag,
-  and rendered content.
+  prompt documents.
+- Portable Mustache-style `{{variable}}` templates (with `\{{` escaping and
+  unicode variable names) for system, user, and assistant messages. Single
+  braces are literal text, so JSON examples can appear naturally in templates.
+- Structured `input`/`output` shorthand that compiles to JSON Schema, with
+  render-time input validation.
+- Tool interface configs — description + input/output schemas — that bind to
+  executable handlers at call time.
+- Skills: named, addressable prose blocks (`description` = when,
+  `instructions` = templated how) rendered as `skill:<name>` system messages.
+- Immutable prompt mutations for optimizers: `withTemplate`,
+  `withToolDescription`, `withSkillDescription`, `withSkillInstructions` —
+  plus `readCandidate` / `applyCandidate` over `{address: text}` dicts (the
+  GEPA `optimize_anything` candidate shape) and `renderMessage` for typed
+  mid-conversation turns. Documents never carry optimization intent; optimizer
+  scripts choose target addresses per run.
+- Typed rendered messages for traces: template, variables, id, and rendered
+  content.
 - Direct delegation to AI SDK `generateText`, `streamText`, `Output.object`,
   `tool`, `jsonSchema`, and `isStepCount`.
 
@@ -79,7 +94,7 @@ Read the full scenario guide:
 Start there for:
 
 - code-authored prompts with strong TypeScript inference
-- loading shared JSON/YAML prompt configs
+- loading the exact same JSON/YAML prompt config used by `pai-sdk`
 - structured output
 - tools and handlers
 - streaming
@@ -90,10 +105,11 @@ Start there for:
 
 ## Local Sample
 
-OpenAI structured-output smoke test:
+Samples:
 
 ```bash
 direnv allow
+direnv exec . npm run sample:template
 direnv exec . npm run sample:openai
 ```
 
@@ -110,26 +126,6 @@ import schema from "structured-ai-sdk/prompt-config.schema.json";
 ```
 
 Use it for editor validation, CI checks, or hosted prompt-service validation.
-
-## Template Syntax
-
-Templates use one strict mustache-style placeholder form:
-
-```txt
-Ticket: {{ticket}}
-Ticket: {{ ticket }}
-```
-
-Plain `{ticket}` is literal text. That keeps JSON examples and prose with
-single braces safe. This is not full Mustache: sections, dotted paths, indexes,
-triple braces, and format specifiers are rejected. To render a literal
-mustache tag, escape the opener. To render a literal backslash immediately
-before a real placeholder, escape the backslash too:
-
-```txt
-\{{ticket}} renders as {{ticket}}
-\\{{folder}} renders as \logs when folder = logs
-```
 
 ## Model Strings vs Provider Objects
 

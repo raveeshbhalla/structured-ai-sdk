@@ -7,7 +7,6 @@ export type PromptMessageConfig = {
   role: PromptRole;
   template?: string;
   content?: string;
-  optimize?: boolean;
   id?: string;
 };
 
@@ -16,7 +15,6 @@ export type SimplePromptMessageConfig =
   | {
       template?: string;
       content?: string;
-      optimize?: boolean;
       id?: string;
     };
 
@@ -30,6 +28,14 @@ export type OutputShorthand = {
   readonly [field: string]: OutputShorthandField;
 };
 
+export type PromptInputConfig =
+  | OutputShorthand
+  | {
+      schema: Record<string, unknown>;
+      name?: string;
+      description?: string;
+    };
+
 export type PromptOutputConfig =
   | OutputShorthand
   | {
@@ -40,9 +46,14 @@ export type PromptOutputConfig =
 
 export type PromptToolConfig = {
   description?: string;
-  optimize?: boolean;
   input?: OutputShorthand | { schema: Record<string, unknown> };
+  output?: OutputShorthand | { schema: Record<string, unknown> };
   strict?: boolean;
+};
+
+export type PromptSkillConfig = {
+  description: string;
+  instructions: string;
 };
 
 export type ToolChoiceConfig =
@@ -55,11 +66,13 @@ export type ToolChoiceConfig =
     };
 
 export type PromptConfig = {
+  specVersion?: "pai.prompt.v1";
   name: string;
   version?: string | number;
   description?: string;
   model?: unknown;
   params?: Record<string, unknown>;
+  input?: PromptInputConfig;
   output?: PromptOutputConfig;
   system?: SimplePromptMessageConfig;
   user?: SimplePromptMessageConfig;
@@ -67,78 +80,33 @@ export type PromptConfig = {
   tools?: Record<string, PromptToolConfig>;
   tool_choice?: ToolChoiceConfig;
   max_steps?: number;
+  skills?: Record<string, PromptSkillConfig>;
 };
 
-type TemplateWhitespace = " " | "\n" | "\r" | "\t";
-type TrimLeft<S extends string> = S extends `${TemplateWhitespace}${infer Rest}`
+type TrimLeft<S extends string> = S extends ` ${infer Rest}`
   ? TrimLeft<Rest>
-  : S;
-type TrimRight<S extends string> = S extends `${infer Rest}${TemplateWhitespace}`
+  : S extends `\n${infer Rest}`
+    ? TrimLeft<Rest>
+    : S extends `\t${infer Rest}`
+      ? TrimLeft<Rest>
+      : S;
+
+type TrimRight<S extends string> = S extends `${infer Rest} `
   ? TrimRight<Rest>
-  : S;
+  : S extends `${infer Rest}\n`
+    ? TrimRight<Rest>
+    : S extends `${infer Rest}\t`
+      ? TrimRight<Rest>
+      : S;
+
 type Trim<S extends string> = TrimLeft<TrimRight<S>>;
 
-type LowerAlpha =
-  | "a"
-  | "b"
-  | "c"
-  | "d"
-  | "e"
-  | "f"
-  | "g"
-  | "h"
-  | "i"
-  | "j"
-  | "k"
-  | "l"
-  | "m"
-  | "n"
-  | "o"
-  | "p"
-  | "q"
-  | "r"
-  | "s"
-  | "t"
-  | "u"
-  | "v"
-  | "w"
-  | "x"
-  | "y"
-  | "z";
-type UpperAlpha = Uppercase<LowerAlpha>;
-type Digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
-type IdentifierStart = LowerAlpha | UpperAlpha | "_";
-type IdentifierPart = IdentifierStart | Digit;
-type IsIdentifierTail<S extends string> = S extends ""
-  ? true
-  : S extends `${infer First}${infer Rest}`
-    ? First extends IdentifierPart
-      ? IsIdentifierTail<Rest>
-      : false
-    : false;
-type IsIdentifier<S extends string> = S extends `${infer First}${infer Rest}`
-  ? First extends IdentifierStart
-    ? IsIdentifierTail<Rest>
-    : false
-  : false;
-type TemplateVariableName<S extends string> =
-  IsIdentifier<Trim<S>> extends true ? Trim<S> : never;
-type Toggle<T extends boolean> = T extends true ? false : true;
-type HasOddTrailingBackslashes<
-  S extends string,
-  Odd extends boolean = false,
-> = S extends `${infer Prefix}\\`
-  ? HasOddTrailingBackslashes<Prefix, Toggle<Odd>>
-  : Odd;
-type ExtractTemplateVariablesFrom<S extends string> =
-  S extends `${infer Before}{{${infer Name}}}${infer Rest}`
-    ? HasOddTrailingBackslashes<Before> extends true
-      ? ExtractTemplateVariablesFrom<Rest>
-      : TemplateVariableName<Name> | ExtractTemplateVariablesFrom<Rest>
-    : never;
-
 export type ExtractTemplateVariables<S extends string> =
-  string extends S ? string : ExtractTemplateVariablesFrom<S>;
+  string extends S
+    ? string
+    : S extends `${string}{{${infer Name}}}${infer Rest}`
+      ? Trim<Name> | ExtractTemplateVariables<Rest>
+      : never;
 
 type TemplateFromSimple<T> = T extends string
   ? T
@@ -154,10 +122,26 @@ type MessageTemplateUnion<Messages> = Messages extends readonly unknown[]
   ? TemplateFromMessage<Messages[number]>
   : never;
 
-export type PromptVariableNames<C> = C extends { messages: infer Messages }
+type InstructionsFromSkill<T> = T extends {
+  instructions: infer Instructions extends string;
+}
+  ? Instructions
+  : never;
+
+type SkillTemplateUnion<Skills> = InstructionsFromSkill<Skills[keyof Skills]>;
+
+type MessageVariableNames<C> = C extends { messages: infer Messages }
   ? ExtractTemplateVariables<MessageTemplateUnion<Messages>>
   : ExtractTemplateVariables<TemplateFromSimple<C extends { system: infer S } ? S : never>> |
       ExtractTemplateVariables<TemplateFromSimple<C extends { user: infer U } ? U : never>>;
+
+type SkillVariableNames<C> = C extends { skills: infer Skills }
+  ? ExtractTemplateVariables<SkillTemplateUnion<Skills>>
+  : never;
+
+export type PromptVariableNames<C> =
+  | MessageVariableNames<C>
+  | SkillVariableNames<C>;
 
 export type PromptVariables<C> = [PromptVariableNames<C>] extends [never]
   ? Record<string, unknown>
@@ -205,9 +189,19 @@ type ToolInputFromConfig<T> = T extends { input: infer I }
   ? OutputFromConfig<I>
   : Record<string, never>;
 
+type ToolOutputFromConfig<T> = T extends { output: infer O }
+  ? OutputFromConfig<O>
+  : unknown;
+
 export type PromptToolInputs<C> = C extends { tools: infer Tools }
   ? {
       [K in keyof Tools]: ToolInputFromConfig<Tools[K]>;
+    }
+  : Record<string, never>;
+
+export type PromptToolOutputs<C> = C extends { tools: infer Tools }
+  ? {
+      [K in keyof Tools]: ToolOutputFromConfig<Tools[K]>;
     }
   : Record<string, never>;
 

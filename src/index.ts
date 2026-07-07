@@ -13,9 +13,29 @@ export {
   type TypedSystemMessage as TypedSystemMessageType,
   type TypedUserMessage as TypedUserMessageType,
 } from "./messages";
-export { Prompt, definePrompt, loadPrompt, loadPromptUrl } from "./prompt";
+export {
+  PROMPT_SPEC_VERSION,
+  Prompt,
+  canonicalJson,
+  definePrompt,
+  loadPrompt,
+  loadPromptUrl,
+  toolOutputSchema,
+  type PromptDocument,
+} from "./prompt";
+export {
+  applyCandidate,
+  applyOptimizerTarget,
+  listOptimizerTargets,
+  parseTargetAddress,
+  readCandidate,
+  readOptimizerTarget,
+  targetAddress,
+  type OptimizerTarget,
+  type OptimizerTargetKind,
+} from "./optimization";
 export { PROMPT_CONFIG_SCHEMA, compileOutputShorthand } from "./schema";
-export { extractVariables, renderTemplate } from "./template";
+export { escapeTemplateLiterals, extractVariables, renderTemplate } from "./template";
 export type {
   ExtractTemplateVariables,
   OutputFromConfig,
@@ -24,12 +44,15 @@ export type {
   PromptConfig,
   PromptHandler,
   PromptHandlers,
+  PromptInputConfig,
   PromptMessageConfig,
   PromptOutput,
   PromptOutputConfig,
   PromptRole,
+  PromptSkillConfig,
   PromptToolConfig,
   PromptToolInputs,
+  PromptToolOutputs,
   PromptVariableNames,
   PromptVariables,
   SimplePromptMessageConfig,
