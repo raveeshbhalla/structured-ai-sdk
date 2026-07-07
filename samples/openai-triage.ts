@@ -9,7 +9,7 @@ const prompt = definePrompt({
   model: openai(modelId),
   params: {
     temperature: 0,
-    max_output_tokens: 220,
+    maxOutputTokens: 220,
   },
   output: {
     urgency: ["low", "medium", "high"],

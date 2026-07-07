@@ -16,7 +16,10 @@ A prompt document is a data object with:
 - `specVersion`: `pai.prompt.v1` (optional on input, always emitted)
 - `name`: stable prompt name for logs and traces
 - `model`: an AI SDK model object or model string
-- `params`: default AI SDK call options, written in `pai-sdk` snake_case
+- `params`: call options in the AI SDK vocabulary (camelCase —
+  `maxOutputTokens`, `providerOptions`, ...), passed to
+  `generateText`/`streamText` verbatim; snake_case keys are rejected with a
+  did-you-mean error
 - optional `input`: the typed variable contract (shorthand or JSON Schema)
 - `system` and `user`, or a full `messages` array
 - optional `output`: structured-output schema
@@ -418,6 +421,48 @@ An optimizer run that targets `message:instructions` can rewrite the
 instructions but has no address that changes the frozen `policy` block —
 literal `content` messages are not templates and cannot be mutated.
 
+## Scenario 8b: PromptSpec — Typed Socket For Optimizer-Produced Documents
+
+Use `definePromptSpec` when an external optimization plane (e.g. Orizu)
+evolves your documents and you want load-time contract validation, typed
+output, and pre-bound tool handlers — defined once in code:
+
+```ts
+const triage = definePromptSpec({
+  name: "support-triage",
+  input: { company: "string", ticket: "string" },
+  output: { urgency: ["low", "medium", "high"], summary: "string" },
+  tools: {
+    lookup_customer: {
+      description: "Look up the customer's plan.",     // seed text
+      input: { customer_email: "string" },
+      execute: async ({ customer_email }) => lookup(customer_email),
+    },
+  },
+} as const);
+
+// Day 0 — author the seed through the spec:
+const seed = triage.document({
+  model: openai("gpt-4.1-mini"),
+  system: "You triage tickets for {{company}}. Be decisive.",
+  user: "Ticket: {{ticket}}",
+});
+seed.export("prompts/support-triage.json");     // -> optimizer ingests this
+
+// Every deploy after — plug the optimized JSON back in:
+const prompt = await triage.loadUrl("https://prompts.internal/support-triage");
+const result = await prompt.generate({ company: "Acme", ticket: "It broke" });
+result.output.urgency;                           // "low" | "medium" | "high"
+```
+
+`bind()`/`load()`/`loadUrl()` enforce the contract: name match, required
+input fields + types exact (extra optional fields allowed), output/tool
+schemas structurally compatible (`title`/`description` prose ignored — those
+belong to the optimizer). Spec `execute` handlers auto-bind; call-time
+`handlers` win. Everything `applyCandidate` produces binds by construction.
+Mutation helpers (`withTemplate`, ...) return plain prompts — re-`bind()` the
+result to restore handlers and typing.
+
 ## Scenario 9: Hosted Prompt Service
 
 Use `loadPromptUrl` when prompts are served by an internal service.
@@ -560,6 +605,13 @@ prompt.toDict();
 listOptimizerTargets(prompt);
 readCandidate(prompt, addresses);
 applyCandidate(prompt, candidate);
+
+definePromptSpec(spec);
+spec.document(text);
+spec.bind(promptOrConfig);
+spec.load(source);
+spec.loadUrl(url);
+prompt.export(path);
 
 extractVariables(template);
 renderTemplate(template, vars);

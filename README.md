@@ -75,6 +75,9 @@ types from the prompt config. JSON/YAML prompt files use the same schema as
   executable handlers at call time.
 - Skills: named, addressable prose blocks (`description` = when,
   `instructions` = templated how) rendered as `skill:<name>` system messages.
+- `definePromptSpec`: the typed code socket optimizer-produced documents
+  plug into — load-time contract validation, spec-typed `result.output`,
+  pre-bound tool handlers, `document()`/`export()` for authoring seeds.
 - Immutable prompt mutations for optimizers: `withTemplate`,
   `withToolDescription`, `withSkillDescription`, `withSkillInstructions` —
   plus `readCandidate` / `applyCandidate` over `{address: text}` dicts (the

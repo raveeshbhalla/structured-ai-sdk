@@ -45,8 +45,8 @@ const prompt = definePrompt({
       output: { plan: "string", monthly_spend: "number" },
     },
   },
-  tool_choice: "auto",
-  max_steps: 4,
+  toolChoice: "auto",
+  maxSteps: 4,
 } as const);
 
 const variables = {
