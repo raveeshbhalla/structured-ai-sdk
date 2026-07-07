@@ -150,3 +150,47 @@ describe("camelCase document vocabulary", () => {
     ).toThrow(); // old key rejected by the schema
   });
 });
+
+describe("contract-validation review regressions", () => {
+  it("does not ignore data fields literally named title/description", () => {
+    const spec = definePromptSpec({
+      name: "t",
+      output: { description: "string", urgency: ["low", "high"] },
+    } as const);
+    const doc = JSON.parse(JSON.stringify(
+      spec.document({ user: "Q: {{q}}" }).toDict(),
+    ));
+    doc.output.schema.properties.description = { type: "integer" };
+    expect(() => spec.bind(doc)).toThrow(/output schema/);
+  });
+
+  it("tolerates key and required-order differences (order is never semantic)", () => {
+    const spec = definePromptSpec({
+      name: "t",
+      output: { urgency: "string", summary: "string" },
+    } as const);
+    const doc = JSON.parse(JSON.stringify(
+      spec.document({ user: "Q: {{q}}" }).toDict(),
+    ));
+    // reorder keys + required
+    doc.output.schema = {
+      additionalProperties: false,
+      required: ["summary", "urgency"],
+      properties: {
+        summary: { type: "string" },
+        urgency: { type: "string" },
+      },
+      type: "object",
+    };
+    spec.bind(doc); // must not throw
+  });
+
+  it("preserves runtime model objects through bind(prompt)", async () => {
+    const { definePrompt } = await import("../src");
+    const spec = definePromptSpec({ name: "t" } as const);
+    const modelObject = { modelId: "fake", specificationVersion: "v4" };
+    const prompt = definePrompt({ name: "t", user: "hi", model: modelObject });
+    const bound = spec.bind(prompt);
+    expect(bound.config.model).toBe(modelObject);
+  });
+});

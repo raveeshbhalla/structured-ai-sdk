@@ -93,26 +93,67 @@ export type SpecPromptShape<S extends PromptSpecConfig> = Omit<
   (S extends { tools: infer T } ? { tools: T } : {});
 
 const IGNORED_SCHEMA_KEYS = new Set(["title", "description"]);
+// Keys whose values are field-name maps (children are schemas, keys are data)
+const MAP_KEYS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
+// Keys whose values are plain data, never schemas — no filtering inside
+const DATA_KEYS = new Set(["enum", "const", "default", "examples"]);
 
-function comparableSchema(schema: unknown): unknown {
+type SchemaContext = "schema" | "map" | "data";
+
+function comparableSchema(schema: unknown, context: SchemaContext = "schema"): unknown {
   if (Array.isArray(schema)) {
-    return schema.map(comparableSchema);
+    return schema.map((item) =>
+      comparableSchema(item, context === "data" ? "data" : "schema"),
+    );
   }
   if (schema !== null && typeof schema === "object") {
+    const entries = Object.entries(schema as Record<string, unknown>);
+    if (context === "map") {
+      // keys are FIELD NAMES (a field may be named "title"/"description")
+      return Object.fromEntries(
+        entries.map(([key, value]) => [key, comparableSchema(value, "schema")]),
+      );
+    }
+    if (context === "data") {
+      return Object.fromEntries(
+        entries.map(([key, value]) => [key, comparableSchema(value, "data")]),
+      );
+    }
     return Object.fromEntries(
-      Object.entries(schema as Record<string, unknown>)
+      entries
         .filter(([key]) => !IGNORED_SCHEMA_KEYS.has(key))
-        .map(([key, value]) => [key, comparableSchema(value)]),
+        .map(([key, value]) => {
+          if (key === "required" && Array.isArray(value)) {
+            return [key, [...value].sort()]; // required is a set
+          }
+          const next: SchemaContext = MAP_KEYS.has(key)
+            ? "map"
+            : DATA_KEYS.has(key)
+              ? "data"
+              : "schema";
+          return [key, comparableSchema(value, next)];
+        }),
     );
   }
   return schema;
 }
 
-function schemasCompatible(expected: unknown, actual: unknown): boolean {
-  return (
-    JSON.stringify(comparableSchema(expected)) ===
-    JSON.stringify(comparableSchema(actual))
+function sortedJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(sortedJson).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
   );
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${sortedJson(v)}`).join(",")}}`;
+}
+
+function schemasCompatible(expected: unknown, actual: unknown): boolean {
+  // Key order is never semantic (spec/README.md) — compare canonically.
+  return sortedJson(comparableSchema(expected)) === sortedJson(comparableSchema(actual));
 }
 
 function toSchema(
@@ -139,13 +180,16 @@ export class PromptSpec<S extends PromptSpecConfig = PromptSpecConfig> {
   }
 
   private handlers(): Record<string, (...args: any[]) => unknown> {
-    const handlers: Record<string, (...args: any[]) => unknown> = {};
-    for (const [name, toolConfig] of Object.entries(this.spec.tools ?? {})) {
-      if (toolConfig.execute) {
-        handlers[name] = toolConfig.execute as (...args: any[]) => unknown;
-      }
-    }
-    return handlers;
+    // Object.fromEntries creates own data properties, so a tool named
+    // "__proto__" cannot silently drop its handler.
+    return Object.fromEntries(
+      Object.entries(this.spec.tools ?? {})
+        .filter(([, toolConfig]) => toolConfig.execute)
+        .map(([name, toolConfig]) => [
+          name,
+          toolConfig.execute as (...args: any[]) => unknown,
+        ]),
+    );
   }
 
   // -- authoring: code -> document ----------------------------------------
@@ -176,9 +220,17 @@ export class PromptSpec<S extends PromptSpecConfig = PromptSpecConfig> {
   /** Validate a document against this spec and return a typed prompt with
    * the spec's handlers bound (call-time `handlers` win). */
   bind(promptOrConfig: Prompt | PromptConfig): Prompt<SpecPromptShape<S>> {
-    const document =
-      promptOrConfig instanceof Prompt ? promptOrConfig.toDict() : promptOrConfig;
-    const prompt = new Prompt(document as SpecPromptShape<S>, {
+    let config: PromptConfig;
+    if (promptOrConfig instanceof Prompt) {
+      config = promptOrConfig.toDict() as PromptConfig;
+      // toDict() serializes only string models; keep a runtime model object.
+      if (promptOrConfig.config.model !== undefined) {
+        config.model = promptOrConfig.config.model;
+      }
+    } else {
+      config = promptOrConfig;
+    }
+    const prompt = new Prompt(config as SpecPromptShape<S>, {
       handlers: this.handlers(),
     });
     this.validate(prompt);

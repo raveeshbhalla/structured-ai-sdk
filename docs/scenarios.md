@@ -460,6 +460,8 @@ input fields + types exact (extra optional fields allowed), output/tool
 schemas structurally compatible (`title`/`description` prose ignored — those
 belong to the optimizer). Spec `execute` handlers auto-bind; call-time
 `handlers` win. Everything `applyCandidate` produces binds by construction.
+Mutation helpers (`withTemplate`, ...) return plain prompts — re-`bind()` the
+result to restore handlers and typing.
 
 ## Scenario 9: Hosted Prompt Service
 

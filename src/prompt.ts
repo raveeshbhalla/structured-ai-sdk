@@ -110,7 +110,9 @@ const EMPTY_OBJECT_SCHEMA = {
 
 export type PromptRuntimeOptions = {
   /** Default tool handlers, merged under call-time `handlers` (call-time
-   * wins). Set by PromptSpec.bind(); never part of the document. */
+   * wins). Set by PromptSpec.bind(); never part of the document. NOTE:
+   * mutation helpers (withTemplate, withToolDescription, ...) return plain
+   * prompts without these — re-`bind()` the result to restore them. */
   handlers?: Record<string, (...args: any[]) => unknown>;
 };
 
