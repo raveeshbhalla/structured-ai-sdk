@@ -25,7 +25,8 @@
     "sample:openai": "tsx samples/openai-triage.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "sample:template": "tsx samples/prompt-template.ts"
+    "sample:template": "tsx samples/prompt-template.ts",
+    "sample:skills": "tsx samples/skills-candidates.ts"
   },
   "peerDependencies": {
     "ai": "^7.0.0",

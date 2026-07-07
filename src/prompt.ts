@@ -207,7 +207,7 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
     }
     const properties = schema.properties as Record<string, unknown> | undefined;
     const required = (schema.required as string[] | undefined) ?? [];
-    const missing = required.filter((name) => !(name in data));
+    const missing = required.filter((name) => !Object.hasOwn(data, name));
     if (missing.length > 0) {
       throw new PromptError(
         `Prompt '${this.name}' is missing required input fields: ${missing.join(", ")}.`,
@@ -215,7 +215,7 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
     }
     if (schema.additionalProperties === false && properties !== undefined) {
       const extra = Object.keys(data)
-        .filter((name) => !(name in properties))
+        .filter((name) => !Object.hasOwn(properties, name))
         .sort();
       if (extra.length > 0) {
         throw new PromptError(
@@ -251,7 +251,9 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
   }
 
   withToolDescription(toolName: string, newDescription: string): Prompt<C> {
-    const toolConfig = this.config.tools[toolName];
+    const toolConfig = Object.hasOwn(this.config.tools, toolName)
+      ? this.config.tools[toolName]
+      : undefined;
     if (!toolConfig) {
       throw new PromptError(`No tool named '${toolName}'.`);
     }
@@ -262,7 +264,9 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
   }
 
   withSkillDescription(skillName: string, newDescription: string): Prompt<C> {
-    const skill = this.config.skills[skillName];
+    const skill = Object.hasOwn(this.config.skills, skillName)
+      ? this.config.skills[skillName]
+      : undefined;
     if (!skill) {
       throw new PromptError(`No skill named '${skillName}'.`);
     }
@@ -272,7 +276,9 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
   }
 
   withSkillInstructions(skillName: string, newInstructions: string): Prompt<C> {
-    const skill = this.config.skills[skillName];
+    const skill = Object.hasOwn(this.config.skills, skillName)
+      ? this.config.skills[skillName]
+      : undefined;
     if (!skill) {
       throw new PromptError(`No skill named '${skillName}'.`);
     }
@@ -299,7 +305,7 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
 
   render(variables?: PromptVariables<C>): TypedModelMessage[] {
     let bindings = (variables ?? {}) as RuntimePromptVariables;
-    const missing = this.variables.filter((name) => !(name in bindings));
+    const missing = this.variables.filter((name) => !Object.hasOwn(bindings, name));
     if (missing.length > 0) {
       throw new PromptError(
         `Prompt '${this.name}' is missing variables: ${missing.join(", ")}.`,
@@ -326,7 +332,9 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
       throw new PromptError(`No message with id '${messageId}'.`);
     }
     const bindings = variables ?? {};
-    const missing = messageVariables(message).filter((name) => !(name in bindings));
+    const missing = messageVariables(message).filter(
+      (name) => !Object.hasOwn(bindings, name),
+    );
     if (missing.length > 0) {
       throw new PromptError(
         `Message '${messageId}' is missing variables: ${missing.join(", ")}.`,
@@ -404,7 +412,7 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
 
     const boundHandlers = (handlers ?? {}) as Record<string, (...args: any[]) => unknown>;
     const unknownHandlers = Object.keys(boundHandlers).filter(
-      (name) => !(name in this.config.tools),
+      (name) => !Object.hasOwn(this.config.tools, name),
     );
     if (unknownHandlers.length > 0) {
       throw new PromptError(
@@ -415,7 +423,9 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
     if (Object.keys(this.config.tools).length > 0 && callOptions.tools === undefined) {
       callOptions.tools = Object.fromEntries(
         Object.entries(this.config.tools).map(([name, config]) => {
-          const execute = boundHandlers[name];
+          const execute = Object.hasOwn(boundHandlers, name)
+            ? boundHandlers[name]
+            : undefined;
           return [
             name,
             tool(
@@ -523,11 +533,14 @@ function effectiveMessagesOf(
   messages: readonly PromptMessageConfig[],
   skills: Record<string, PromptSkillConfig>,
 ): PromptMessageConfig[] {
-  const skillEntries = Object.entries(skills);
-  if (skillEntries.length === 0) {
+  const skillNames = Object.keys(skills);
+  if (skillNames.length === 0) {
     return [...messages];
   }
-  const skillMessages = skillEntries.map(([name, skill]) => skillMessage(name, skill));
+  // Sorted-name order (never declaration order): key order is not semantic
+  // and the canonical hash sorts keys, so rendering must agree.
+  skillNames.sort(codePointCompare);
+  const skillMessages = skillNames.map((name) => skillMessage(name, skills[name]!));
   let lastSystem = -1;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index]!.role === "system") {
@@ -726,7 +739,7 @@ function validateInputSchemaCoverage(config: NormalizedPromptConfig): void {
       }
     }
   }
-  const missing = names.filter((name) => !(name in properties));
+  const missing = names.filter((name) => !Object.hasOwn(properties, name));
   if (missing.length > 0) {
     throw new PromptError(
       `Prompt input schema must declare template variables: ${missing.join(", ")}.`,
@@ -854,17 +867,34 @@ function codePointCompare(left: string, right: string): number {
   return leftPoints.length - rightPoints.length;
 }
 
+function canonicalNumber(value: number): string {
+  // Integral doubles print as plain digits (1e21 -> "1000000000000000000000",
+  // matching Python's int conversion); String() already matches the
+  // spec's ECMAScript formatting for everything else.
+  if (Number.isInteger(value)) {
+    return Object.is(value, -0) ? "0" : BigInt(value).toString();
+  }
+  return String(value);
+}
+
 /**
  * The canonical JSON serialization used for contentHash(): sorted keys (by
- * code point), compact separators, raw unicode — byte-identical with
- * pai-sdk's canonical_prompt_json (see spec/README.md).
+ * code point), compact separators, raw unicode, ECMAScript number formatting
+ * — byte-identical with pai-sdk's canonical_prompt_json (see spec/README.md).
  */
 export function canonicalJson(value: unknown): string {
+  if (value === undefined) {
+    // Mirror JSON.stringify's array behavior; bare undefined has no JSON form.
+    return "null";
+  }
+  if (typeof value === "number") {
+    return canonicalNumber(value);
+  }
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
+    return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
   }
   const entries = Object.entries(value as Record<string, unknown>)
     .filter(([, entry]) => entry !== undefined)

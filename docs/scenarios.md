@@ -1,8 +1,9 @@
 # Structured AI SDK Scenario Guide
 
 This guide shows how to use `structured-ai-sdk` in the situations it was built
-for: typed prompt definitions, shared JSON/YAML prompt configs, structured
-output, tools, optimizer-safe prompt mutation, and traceable model calls.
+for: typed prompt definitions, shared JSON/YAML prompt documents
+(`specVersion: pai.prompt.v1`, identical to `pai-sdk`'s), structured output,
+tools, skills, optimizer-safe prompt mutation, and traceable model calls.
 
 The short version: define or load a prompt, render it with variables, and call
 `generate` or `stream`. The wrapper handles prompt templating and config
@@ -10,14 +11,19 @@ contracts; the Vercel AI SDK still performs the model call.
 
 ## Mental Model
 
-A prompt config is a data object with:
+A prompt document is a data object with:
 
+- `specVersion`: `pai.prompt.v1` (optional on input, always emitted)
 - `name`: stable prompt name for logs and traces
 - `model`: an AI SDK model object or model string
 - `params`: default AI SDK call options, written in `pai-sdk` snake_case
+- optional `input`: the typed variable contract (shorthand or JSON Schema)
 - `system` and `user`, or a full `messages` array
 - optional `output`: structured-output schema
-- optional `tools`: serializable tool interfaces
+- optional `tools`: serializable tool interfaces (description + input/output
+  schemas)
+- optional `skills`: named blocks of prose (`description` = when,
+  `instructions` = templated how)
 - optional `max_steps`: tool-loop budget
 
 Rendering creates typed model messages that preserve:
@@ -25,11 +31,11 @@ Rendering creates typed model messages that preserve:
 - rendered `content`
 - original `template`
 - bound `variables`
-- stable message `id`
-- `optimize` flag
+- stable message `id` (skills render as `skill:<name>`)
 
 AI SDK providers only see the rendered prompt. Your logs and optimizers can see
-the full structured trace.
+the full structured trace. Documents never carry optimization intent —
+optimizer scripts choose target addresses at run time.
 
 ## Scenario 1: Code-Authored Prompt With TypeScript Inference
 
@@ -202,9 +208,12 @@ const weatherPrompt = definePrompt({
   tools: {
     get_weather: {
       description: "Get current weather. Call for weather questions.",
-      optimize: true,
       input: {
         city: "string",
+      },
+      output: {
+        city: "string",
+        forecast: "string",
       },
     },
   },
@@ -226,7 +235,7 @@ const result = await weatherPrompt.generate(
 
 Rules:
 
-- config declares tool name, description, input schema, and `strict`
+- config declares tool name, description, input/output schemas, and `strict`
 - `handlers` bind executable functions by name at call time
 - undeclared handlers throw, which catches typos
 - declared tools without handlers are client-side tools; AI SDK returns calls
@@ -235,8 +244,39 @@ Rules:
 - `tool_choice: { type: "tool", tool_name: "get_weather" }` maps to AI SDK
   `{ type: "tool", toolName: "get_weather" }`
 
-Tool descriptions can be optimized when `optimize: true`; names and schemas
-are the stable contract.
+Tool descriptions are optimizer-addressable prose (`tool:<name>`); names and
+schemas are the stable contract and never change through mutation.
+
+## Scenario 4b: Skills
+
+Skills are named, addressable blocks of model-facing prose. `description`
+says when the skill applies; `instructions` (a template) says how. They render
+as system messages with id `skill:<name>` after the last declared system
+message, and instruction `{{variables}}` join the prompt's input contract:
+
+```ts
+const prompt = definePrompt({
+  name: "support-agent",
+  model,
+  system: "You are the support agent for {{company}}.",
+  user: "{{ticket}}",
+  skills: {
+    refunds: {
+      description: "Apply when the customer asks for money back.",
+      instructions:
+        "Refunds at {{company}}: up to $500 without escalation; above that, escalate.",
+    },
+  },
+} as const);
+
+prompt.render({ company: "Acme", ticket: "Refund me $700." });
+// -> [system, skill:refunds (system), user]
+```
+
+Both prose fields are optimizer-addressable (`skill:refunds.description`,
+`skill:refunds.instructions`); the skill name is the contract.
+`prompt.renderMessage("skill:refunds", vars)` renders one skill block for
+appending to an ongoing conversation.
 
 ## Scenario 5: Streaming
 
@@ -261,53 +301,50 @@ output mode.
 
 ## Scenario 6: Optimizer Or GEPA-Style Prompt Mutation
 
-Use this when an optimizer may rewrite instructions but must not break call
-sites.
+Use this when an optimizer (e.g. a GEPA `optimize_anything` runner) may
+rewrite prompt text but must not break call sites. Targets are addressed as
+`message:<id>`, `tool:<name>`, `skill:<name>.description`, or
+`skill:<name>.instructions`; a candidate is a `{address: text}` object —
+exactly the shape `optimize_anything` evolves:
 
 ```ts
-const prompt = definePrompt({
-  name: "support-triage",
-  model,
-  messages: [
-    {
-      id: "instructions",
-      role: "system",
-      optimize: true,
-      template: "You triage tickets for {{company}}. Be decisive.",
-    },
-    {
-      id: "ticket",
-      role: "user",
-      template: "Ticket: {{ticket}}",
-    },
-  ],
-} as const);
+import { applyCandidate, readCandidate } from "structured-ai-sdk";
 
-const evolved = prompt.withTemplate(
-  "instructions",
-  "You are {{company}}'s senior incident triage assistant. Be precise.",
-);
+const seed = readCandidate(prompt, [
+  "message:instructions",
+  "skill:refunds.instructions",
+]);
+// { "message:instructions": "...", "skill:refunds.instructions": "..." }
 
-console.log(prompt.contentHash());
-console.log(evolved.contentHash());
+// ...the external optimizer proposes evolved candidates...
+
+const evolved = applyCandidate(prompt, bestCandidate);
+console.log(evolved.contentHash());          // candidate identity
+await persist(JSON.stringify(evolved.toDict())); // the optimized document
+```
+
+Single-target mutations are also available directly:
+
+```ts
+prompt.withTemplate("instructions", "You are {{company}}'s senior triager.");
+prompt.withToolDescription("get_weather", "Always call before answering.");
+prompt.withSkillInstructions("refunds", "Refund within {{company}} limits.");
+prompt.withSkillDescription("refunds", "Apply on any money-back request.");
 ```
 
 The mutation contract is enforced:
 
-- only messages with `optimize: true` can be rewritten
-- the new template must preserve the exact variable set
+- template/instructions mutations must preserve the exact variable set
+- tool and skill names and all schemas never change through mutation
 - mutation returns a new `Prompt`; the original is unchanged
-- `contentHash()` gives a stable candidate identity
-- `toDict()` serializes the evolved config back to JSON/YAML-compatible data
+- `contentHash()` gives a stable candidate identity, byte-identical with
+  pai-sdk's for the same document
+- `toDict()` serializes the evolved document back to JSON/YAML-compatible
+  data — persist it and load it anywhere (Python or TypeScript)
 
-Tool descriptions have the same pattern:
-
-```ts
-const evolved = prompt.withToolDescription(
-  "get_weather",
-  "Fetch current weather. Always call before answering weather questions.",
-);
-```
+Optimization intent lives in the optimizer script, never in the document:
+`listOptimizerTargets(prompt)` lists what is addressable, and each run decides
+what to touch.
 
 This package does not run GEPA itself. It provides the safe mutation substrate
 for a GEPA runner or evaluation system.
@@ -337,7 +374,7 @@ const replayableMessages = loadMessages(trace);
 ```
 
 Each typed message includes the rendered `content` plus the original
-`template`, `variables`, `id`, and `optimize` metadata.
+`template`, `variables`, and `id` metadata.
 
 ## Scenario 8: Multiple System Blocks And Prompt Safety
 
@@ -361,7 +398,6 @@ const prompt = definePrompt({
     {
       id: "instructions",
       role: "system",
-      optimize: true,
       template: "Answer for {{audience}}.",
     },
     {
@@ -378,8 +414,9 @@ const prompt = definePrompt({
 } as const);
 ```
 
-The optimizer can rewrite `instructions` but cannot rewrite the frozen policy
-block.
+An optimizer run that targets `message:instructions` can rewrite the
+instructions but has no address that changes the frozen `policy` block —
+literal `content` messages are not templates and cannot be mutated.
 
 ## Scenario 9: Hosted Prompt Service
 
@@ -448,9 +485,7 @@ user: "Ticket: {{ticket}}"
 Simple form defaults:
 
 - `system` normalizes to message id `system`
-- `system` is `optimize: true`
 - `user` normalizes to message id `user`
-- `user` is not optimizable
 
 ### General Form
 
@@ -459,7 +494,6 @@ name: support-triage
 messages:
   - id: instructions
     role: system
-    optimize: true
     template: "You triage tickets for {{company}}."
   - id: policy
     role: system
@@ -475,7 +509,6 @@ Use general form for:
 - frozen policy text
 - few-shot assistant turns
 - stable optimizer ids
-- per-message `optimize` control
 
 Each message must have exactly one of `template` or `content`.
 
@@ -500,8 +533,9 @@ Rejected:
 ```
 
 Mustache-style `{{name}}` placeholders keep templates portable across Python and
-TypeScript. Single braces are literal text, so JSON examples like
-`{"answer": "yes"}` can appear without escaping.
+TypeScript (unicode names like `{{café}}` work in both). Single braces are
+literal text, so JSON examples like `{"answer": "yes"}` can appear without
+escaping. A literal `{{` is written `\{{`; backslashes double in front of it.
 
 ## API Cheat Sheet
 
@@ -512,17 +546,24 @@ loadPromptUrl("https://...");
 
 prompt.variables;
 prompt.render(vars);
+prompt.renderMessage(messageId, vars);
 prompt.generate(vars, options);
 prompt.stream(vars, options);
+prompt.validateInputs(vars);
 prompt.withTemplate(messageId, newTemplate);
 prompt.withToolDescription(toolName, newDescription);
-prompt.optimizableMessages();
-prompt.optimizableTools();
+prompt.withSkillDescription(skillName, newDescription);
+prompt.withSkillInstructions(skillName, newInstructions);
 prompt.contentHash();
 prompt.toDict();
 
+listOptimizerTargets(prompt);
+readCandidate(prompt, addresses);
+applyCandidate(prompt, candidate);
+
 extractVariables(template);
 renderTemplate(template, vars);
+escapeTemplateLiterals(text);
 dumpMessages(messages);
 loadMessages(messagesOrJson);
 compileOutputShorthand(fields);
@@ -538,15 +579,6 @@ Prompt 'support-triage' is missing variables: company.
 
 Pass every placeholder used by every template message. Extra variables are
 ignored at runtime.
-
-### Disallowed Template Mutation
-
-```txt
-Message 'ticket' is not marked optimize: true; it must not be rewritten.
-```
-
-Only messages explicitly marked `optimize: true` can be changed with
-`withTemplate`.
 
 ### Variable Set Changed
 

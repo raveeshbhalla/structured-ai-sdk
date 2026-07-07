@@ -113,7 +113,9 @@ export function readOptimizerTarget<C extends PromptConfig>(
     return message.template;
   }
   if (target.kind === "tool_description") {
-    const toolConfig = prompt.config.tools[target.id];
+    const toolConfig = Object.hasOwn(prompt.config.tools, target.id)
+      ? prompt.config.tools[target.id]
+      : undefined;
     if (!toolConfig) {
       throw new PromptError(`No tool named '${target.id}'.`);
     }
@@ -122,7 +124,9 @@ export function readOptimizerTarget<C extends PromptConfig>(
     }
     return toolConfig.description;
   }
-  const skill = prompt.config.skills[target.id];
+  const skill = Object.hasOwn(prompt.config.skills, target.id)
+    ? prompt.config.skills[target.id]
+    : undefined;
   if (!skill) {
     throw new PromptError(`No skill named '${target.id}'.`);
   }

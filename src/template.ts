@@ -1,8 +1,19 @@
 import { TemplateError } from "./errors";
 
-// Unicode identifiers, matching Python's str.isidentifier() closely enough
-// for portable templates ({{café}}, {{变量}}).
-const IDENTIFIER = /^[\p{ID_Start}_][\p{ID_Continue}]*$/u;
+// Unicode identifiers per the spec: XID_Start/_ then XID_Continue — exactly
+// Python's str.isidentifier(), so the same document loads in both runtimes.
+const IDENTIFIER = /^[\p{XID_Start}_][\p{XID_Continue}]*$/u;
+
+// Python's str.strip() whitespace set (str.isspace), which differs from both
+// String.prototype.trim (strips \uFEFF) and \s: portable tag parsing must
+// agree on {{ name }} handling.
+const PY_SPACE =
+  "\t\n\x0b\f\r\x1c\x1d\x1e\x1f \x85\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000";
+const PY_TRIM = new RegExp(`^[${PY_SPACE}]+|[${PY_SPACE}]+$`, "gu");
+
+function pyTrim(text: string): string {
+  return text.replace(PY_TRIM, "");
+}
 
 function countPrecedingBackslashes(text: string, openIndex: number): number {
   let count = 0;
@@ -115,7 +126,7 @@ function unescapeLiteralBeforeTag(text: string): string {
 export function extractVariables(template: string): string[] {
   const names: string[] = [];
   for (const { rawName } of iterTags(template)) {
-    const name = rawName.trim();
+    const name = pyTrim(rawName);
     if (!IDENTIFIER.test(name)) {
       throw new TemplateError(
         `Only plain {{name}} placeholders are supported; got '{{${rawName}}}'.`,
@@ -134,7 +145,7 @@ export function renderTemplate(
   variables: Record<string, unknown>,
 ): string {
   const names = extractVariables(template);
-  const missing = names.filter((name) => !(name in variables));
+  const missing = names.filter((name) => !Object.hasOwn(variables, name));
   if (missing.length > 0) {
     throw new TemplateError(`Missing template variables: ${missing.join(", ")}.`);
   }
@@ -143,7 +154,7 @@ export function renderTemplate(
   let lastIndex = 0;
   for (const { start, end, rawName } of iterTags(template)) {
     rendered.push(unescapeLiteralBeforeTag(template.slice(lastIndex, start)));
-    rendered.push(String(variables[rawName.trim()]));
+    rendered.push(String(variables[pyTrim(rawName)]));
     lastIndex = end;
   }
   rendered.push(unescapeTemplateLiterals(template.slice(lastIndex)));
