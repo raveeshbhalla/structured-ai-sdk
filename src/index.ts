@@ -22,7 +22,16 @@ export {
   loadPromptUrl,
   toolOutputSchema,
   type PromptDocument,
+  type PromptRuntimeOptions,
 } from "./prompt";
+export {
+  PromptSpec,
+  definePromptSpec,
+  type PromptSpecConfig,
+  type SpecDocumentText,
+  type SpecPromptShape,
+  type SpecToolConfig,
+} from "./spec";
 export {
   applyCandidate,
   applyOptimizerTarget,

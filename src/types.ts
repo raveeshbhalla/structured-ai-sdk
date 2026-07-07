@@ -62,7 +62,7 @@ export type ToolChoiceConfig =
   | "required"
   | {
       type: "tool";
-      tool_name: string;
+      toolName: string;
     };
 
 export type PromptConfig = {
@@ -78,8 +78,8 @@ export type PromptConfig = {
   user?: SimplePromptMessageConfig;
   messages?: readonly PromptMessageConfig[];
   tools?: Record<string, PromptToolConfig>;
-  tool_choice?: ToolChoiceConfig;
-  max_steps?: number;
+  toolChoice?: ToolChoiceConfig;
+  maxSteps?: number;
   skills?: Record<string, PromptSkillConfig>;
 };
 

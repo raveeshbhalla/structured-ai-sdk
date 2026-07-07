@@ -40,7 +40,7 @@ const CONFIG = {
   name: "triage",
   version: 1,
   model: "mock-model",
-  params: { temperature: 0.2, max_output_tokens: 500 },
+  params: { temperature: 0.2, maxOutputTokens: 500 },
   output: {
     schema: {
       type: "object",
@@ -87,8 +87,8 @@ const TOOL_CONFIG = {
       },
     },
   },
-  tool_choice: "auto",
-  max_steps: 3,
+  toolChoice: "auto",
+  maxSteps: 3,
 } as const;
 
 describe("template engine", () => {

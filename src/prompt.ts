@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { extname } from "node:path";
 
@@ -59,8 +59,8 @@ type NormalizedPromptConfig = {
   output?: NormalizedSchema;
   messages: PromptMessageConfig[];
   tools: Record<string, PromptToolConfig>;
-  tool_choice?: ToolChoiceConfig;
-  max_steps?: number;
+  toolChoice?: ToolChoiceConfig;
+  maxSteps?: number;
   skills: Record<string, PromptSkillConfig>;
 };
 
@@ -76,23 +76,23 @@ export type PromptDocument = {
   output?: NormalizedSchema;
   messages: PromptMessageConfig[];
   tools?: Record<string, PromptToolConfig>;
-  tool_choice?: ToolChoiceConfig;
-  max_steps?: number;
+  toolChoice?: ToolChoiceConfig;
+  maxSteps?: number;
   skills?: Record<string, PromptSkillConfig>;
 };
 
-type PromptCallOptions<C extends PromptConfig> = Record<string, unknown> & {
+type PromptCallOptions<C> = Record<string, unknown> & {
   model?: unknown;
   handlers?: PromptHandlers<C>;
 };
 
-type PromptGenerateResult<C extends PromptConfig> = GenerateTextResult<
+type PromptGenerateResult<C> = GenerateTextResult<
   any,
   any,
   any
 > & { readonly output: PromptOutput<C> };
 
-type PromptStreamResult<C extends PromptConfig> = StreamTextResult<
+type PromptStreamResult<C> = StreamTextResult<
   any,
   any,
   any
@@ -108,11 +108,19 @@ const EMPTY_OBJECT_SCHEMA = {
   additionalProperties: false,
 };
 
-export class Prompt<C extends PromptConfig = PromptConfig> {
-  readonly config: NormalizedPromptConfig;
+export type PromptRuntimeOptions = {
+  /** Default tool handlers, merged under call-time `handlers` (call-time
+   * wins). Set by PromptSpec.bind(); never part of the document. */
+  handlers?: Record<string, (...args: any[]) => unknown>;
+};
 
-  constructor(config: C) {
-    this.config = normalizePromptConfig(config);
+export class Prompt<C = PromptConfig> {
+  readonly config: NormalizedPromptConfig;
+  private readonly defaultHandlers: Record<string, (...args: any[]) => unknown>;
+
+  constructor(config: C, runtime: PromptRuntimeOptions = {}) {
+    this.config = normalizePromptConfig(config as unknown as PromptConfig);
+    this.defaultHandlers = { ...(runtime.handlers ?? {}) };
   }
 
   get name(): string {
@@ -178,16 +186,23 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
     if (Object.keys(config.tools).length > 0) {
       document.tools = deepClone(config.tools);
     }
-    if (config.tool_choice !== undefined) {
-      document.tool_choice = deepClone(config.tool_choice);
+    if (config.toolChoice !== undefined) {
+      document.toolChoice = deepClone(config.toolChoice);
     }
-    if (config.max_steps !== undefined) {
-      document.max_steps = config.max_steps;
+    if (config.maxSteps !== undefined) {
+      document.maxSteps = config.maxSteps;
     }
     if (Object.keys(config.skills).length > 0) {
       document.skills = deepClone(config.skills);
     }
     return document;
+  }
+
+  /** Write the serialized document to a .json file (pretty-printed) — what
+   * an external optimizer (or the Python runtime) ingests. */
+  export(path: string): string {
+    writeFileSync(path, `${JSON.stringify(this.toDict(), null, 2)}\n`);
+    return path;
   }
 
   inputSchema(): Record<string, unknown> | undefined {
@@ -410,7 +425,10 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
       });
     }
 
-    const boundHandlers = (handlers ?? {}) as Record<string, (...args: any[]) => unknown>;
+    const boundHandlers = {
+      ...this.defaultHandlers,
+      ...((handlers ?? {}) as Record<string, (...args: any[]) => unknown>),
+    };
     const unknownHandlers = Object.keys(boundHandlers).filter(
       (name) => !Object.hasOwn(this.config.tools, name),
     );
@@ -441,12 +459,12 @@ export class Prompt<C extends PromptConfig = PromptConfig> {
       );
     }
 
-    if (this.config.tool_choice !== undefined && callOptions.toolChoice === undefined) {
-      callOptions.toolChoice = mapToolChoice(this.config.tool_choice);
+    if (this.config.toolChoice !== undefined && callOptions.toolChoice === undefined) {
+      callOptions.toolChoice = this.config.toolChoice;
     }
 
-    if (this.config.max_steps !== undefined && callOptions.stopWhen === undefined) {
-      callOptions.stopWhen = isStepCount(this.config.max_steps);
+    if (this.config.maxSteps !== undefined && callOptions.stopWhen === undefined) {
+      callOptions.stopWhen = isStepCount(this.config.maxSteps);
     }
 
     return callOptions;
@@ -504,7 +522,7 @@ export async function loadPromptUrl(
   return new Prompt(parsePromptText(text, inferredFormat === "yaml" ? ".yaml" : ".json"));
 }
 
-function promptFromNormalized<C extends PromptConfig>(
+function promptFromNormalized<C>(
   config: NormalizedPromptConfig,
 ): Prompt<C> {
   return new Prompt(config as unknown as C);
@@ -640,6 +658,15 @@ function normalizePromptConfig(config: PromptConfig): NormalizedPromptConfig {
     extractVariables(skill.instructions); // validate syntax eagerly
   }
 
+  for (const key of Object.keys(data.params ?? {})) {
+    if (Object.hasOwn(PARAM_SNAKE_HINTS, key)) {
+      throw new PromptError(
+        `Unknown params key '${key}' — did you mean '${PARAM_SNAKE_HINTS[key]}'? ` +
+          "Document params use AI SDK option names.",
+      );
+    }
+  }
+
   const input = data.input
     ? "schema" in data.input
       ? (data.input as NormalizedSchema)
@@ -767,18 +794,16 @@ function typedFactory(role: PromptRole) {
   return TypedUserMessage;
 }
 
+// Document params ARE the AI SDK option vocabulary — pass through verbatim.
 function normalizeParams(params: Record<string, unknown>): Record<string, unknown> {
-  const mapped: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(params)) {
-    if (value === undefined) {
-      continue;
-    }
-    mapped[PARAM_ALIASES[key] ?? key] = value;
-  }
-  return mapped;
+  return Object.fromEntries(
+    Object.entries(params).filter(([, value]) => value !== undefined),
+  );
 }
 
-const PARAM_ALIASES: Record<string, string> = {
+// Reject snake_case params with a did-you-mean hint (parity with pai-sdk;
+// never silently converted).
+const PARAM_SNAKE_HINTS: Record<string, string> = {
   max_output_tokens: "maxOutputTokens",
   top_p: "topP",
   top_k: "topK",
@@ -788,10 +813,6 @@ const PARAM_ALIASES: Record<string, string> = {
   max_retries: "maxRetries",
   provider_options: "providerOptions",
   active_tools: "activeTools",
-  tool_choice: "toolChoice",
-  stop_when: "stopWhen",
-  prepare_step: "prepareStep",
-  abort_signal: "abortSignal",
 };
 
 function toolInputSchema(config: PromptToolConfig): Record<string, unknown> {
@@ -816,13 +837,6 @@ export function toolOutputSchema(
     return output.schema as Record<string, unknown>;
   }
   return compileOutputShorthand(output);
-}
-
-function mapToolChoice(choice: ToolChoiceConfig): unknown {
-  if (typeof choice === "string") {
-    return choice;
-  }
-  return { type: "tool", toolName: choice.tool_name };
 }
 
 function parsePromptText(text: string, suffix: string): PromptConfig {

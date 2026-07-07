@@ -42,28 +42,28 @@ export const PROMPT_CONFIG_SCHEMA = {
     },
     "params": {
       "type": "object",
-      "description": "generate_text keyword arguments applied on every call (per-call overrides win).",
+      "description": "Call options in the AI SDK vocabulary (camelCase), passed to generateText/streamText verbatim in TypeScript and mapped 1:1 onto pai-sdk keyword arguments in Python. Per-call overrides win.",
       "properties": {
-        "max_output_tokens": {
+        "maxOutputTokens": {
           "type": "integer",
           "minimum": 1
         },
         "temperature": {
           "type": "number"
         },
-        "top_p": {
+        "topP": {
           "type": "number"
         },
-        "top_k": {
+        "topK": {
           "type": "integer"
         },
-        "presence_penalty": {
+        "presencePenalty": {
           "type": "number"
         },
-        "frequency_penalty": {
+        "frequencyPenalty": {
           "type": "number"
         },
-        "stop_sequences": {
+        "stopSequences": {
           "type": "array",
           "items": {
             "type": "string"
@@ -72,9 +72,13 @@ export const PROMPT_CONFIG_SCHEMA = {
         "seed": {
           "type": "integer"
         },
-        "max_retries": {
+        "maxRetries": {
           "type": "integer",
           "minimum": 0
+        },
+        "providerOptions": {
+          "type": "object",
+          "description": "Provider-specific passthrough keyed by provider name (thinking/effort/reasoning config lives here). Contents are sent verbatim."
         }
       },
       "additionalProperties": true
@@ -178,7 +182,17 @@ export const PROMPT_CONFIG_SCHEMA = {
         "$ref": "#/definitions/tool"
       }
     },
-    "tool_choice": {
+    "skills": {
+      "type": "object",
+      "description": "Skills, keyed by name (letters, digits, '-', '_'; full match). Each renders as a system message with id 'skill:<name>' after the last declared system message, in code-point-sorted name order (key order is never semantic). description = when to apply (literal prose); instructions = how (template). Both are optimizer-addressable text; the name is the contract.",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/definitions/skill"
+      }
+    },
+    "toolChoice": {
       "description": "How the model may use the declared tools.",
       "oneOf": [
         {
@@ -192,34 +206,24 @@ export const PROMPT_CONFIG_SCHEMA = {
           "type": "object",
           "required": [
             "type",
-            "tool_name"
+            "toolName"
           ],
           "additionalProperties": false,
           "properties": {
             "type": {
               "const": "tool"
             },
-            "tool_name": {
+            "toolName": {
               "type": "string"
             }
           }
         }
       ]
     },
-    "max_steps": {
+    "maxSteps": {
       "type": "integer",
       "minimum": 1,
       "description": "Tool-loop step budget (compiles to stop_when=step_count_is(n))."
-    },
-    "skills": {
-      "type": "object",
-      "description": "Skills, keyed by name (letters, digits, '-', '_'; full match). Each renders as a system message with id 'skill:<name>' after the last declared system message, in code-point-sorted name order (key order is never semantic). description = when to apply (literal prose); instructions = how (template). Both are optimizer-addressable text; the name is the contract.",
-      "propertyNames": {
-        "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"
-      },
-      "additionalProperties": {
-        "$ref": "#/definitions/skill"
-      }
     }
   },
   "definitions": {
